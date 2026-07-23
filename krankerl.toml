@@ -1,0 +1,13 @@
+# SPDX-FileCopyrightText: 2026 Ricardo Ferreira <ricardo.ferreira@jofebar.com>
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+# Packaging config for krankerl (https://github.com/ChristophWurst/krankerl).
+# `krankerl package` builds a release tarball, running the build first and
+# excluding everything listed in .nextcloudignore.
+
+[package]
+before_cmds = [
+    "npm ci",
+    "python3 build/l10n.py --check",
+    "npm run build",
+]

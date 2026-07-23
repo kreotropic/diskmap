@@ -1,0 +1,48 @@
+# SPDX-FileCopyrightText: 2026 Ricardo Ferreira <ricardo.ferreira@jofebar.com>
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  l10n:
+    name: l10n coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Check l10n/*.json is in sync with the source strings
+        run: python3 build/l10n.py --check
+
+  php:
+    name: PHP lint + unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          coverage: none
+      - name: Lint (php -l)
+        run: find lib -name '*.php' -print0 | xargs -0 -n1 php -l
+      - name: Install dev dependencies
+        run: composer install --no-interaction --prefer-dist
+      - name: Unit tests
+        run: vendor/bin/phpunit -c phpunit.xml
+
+  frontend:
+    name: Frontend build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm ci
+      - run: npm run build

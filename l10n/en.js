@@ -1,0 +1,28 @@
+OC.L10N.register(
+    "diskmap",
+    {
+    "My storage" : "My storage",
+    "Could not load your storage overview." : "Could not load your storage overview.",
+    "Could not load team folders." : "Could not load team folders.",
+    "No team folders found." : "No team folders found.",
+    "Select a team folder to see details." : "Select a team folder to see details.",
+    "Reflects the file cache as of {date}." : "Reflects the file cache as of {date}.",
+    "Used" : "Used",
+    "Quota" : "Quota",
+    "Unlimited" : "Unlimited",
+    "Occupancy" : "Occupancy",
+    "Files" : "Files",
+    "Trash" : "Trash",
+    "Versions" : "Versions",
+    "Groups" : "Groups",
+    "Team" : "Team",
+    "Group" : "Group",
+    "Not linked to any group." : "Not linked to any group.",
+    "Largest files" : "Largest files",
+    "Could not load the largest files." : "Could not load the largest files.",
+    "No files found." : "No files found.",
+    "Path" : "Path",
+    "Size" : "Size",
+    "unknown" : "unknown"
+},
+"nplurals=2; plural=(n != 1);");

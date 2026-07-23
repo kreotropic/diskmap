@@ -1,0 +1,37 @@
+# SPDX-FileCopyrightText: 2026 Ricardo Ferreira <ricardo.ferreira@jofebar.com>
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+# Everything listed here stays out of the App Store tarball built by
+# `krankerl package`.
+
+# Dependencies / build inputs (js/ ships pre-built)
+node_modules
+vendor
+src
+build
+webpack.config.js
+babel.config.js
+package.json
+package-lock.json
+composer.json
+composer.lock
+js/*.map
+
+# Tests & CI
+tests
+phpunit.xml
+.phpunit.result.cache
+.github
+
+# Dev tooling & repo metadata
+.git
+.gitignore
+.nextcloudignore
+.vscode
+krankerl.toml
+.reuse
+REUSE.toml
+l10n/*.bak
+
+# Docs assets only needed on GitHub / the App Store crawler
+screenshots

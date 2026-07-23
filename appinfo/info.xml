@@ -1,0 +1,53 @@
+<?xml version="1.0"?>
+<!--
+  - SPDX-FileCopyrightText: 2026 Ricardo Ferreira <ricardo.ferreira@jofebar.com>
+  - SPDX-License-Identifier: AGPL-3.0-or-later
+  -->
+<info xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:noNamespaceSchemaLocation="https://apps.nextcloud.com/schema/apps/info.xsd">
+    <id>diskmap</id>
+    <name>DiskMap</name>
+    <summary>See where your storage is going — treemap and top consumers, instance-wide</summary>
+    <description><![CDATA[
+DiskMap shows where storage is going across your Nextcloud instance — per user, per team folder
+and per group — without scanning anything.
+
+Nextcloud already tracks aggregated folder sizes in its file cache, updated on every operation.
+DiskMap is a visualizer over data that already exists: it never triggers a filesystem scan.
+
+**For administrators:**
+- Team folders overview: used space, quota and occupancy, with a files / trash / versions
+  breakdown for each folder.
+- Top largest files across the instance or within any scope.
+- Group view with used-space attribution, reconciled against overlaps (a folder shared by
+  several groups is shown as such, not silently divided).
+
+**For every user:**
+- The same treemap and top-consumers view, scoped strictly to files you can access.
+
+All figures show the timestamp of the underlying file cache entry, so it's always clear this
+reflects what Nextcloud's cache knows, not a live disk read.
+    ]]></description>
+    <version>0.1.0</version>
+    <licence>AGPL-3.0-or-later</licence>
+    <author mail="ricardo.ferreira@jofebar.com">Ricardo Ferreira</author>
+    <namespace>DiskMap</namespace>
+    <category>tools</category>
+    <category>monitoring</category>
+    <website>https://github.com/kreotropic/diskmap</website>
+    <bugs>https://github.com/kreotropic/diskmap/issues</bugs>
+    <repository type="git">https://github.com/kreotropic/diskmap.git</repository>
+
+    <dependencies>
+        <php min-version="8.1"/>
+        <nextcloud min-version="32" max-version="33"/>
+    </dependencies>
+
+    <navigations>
+        <navigation>
+            <name>DiskMap</name>
+            <route>diskmap.page.index</route>
+            <icon>app.svg</icon>
+        </navigation>
+    </navigations>
+</info>

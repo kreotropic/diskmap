@@ -1,0 +1,29 @@
+{
+    "name": "ricardo/diskmap",
+    "description": "See where your storage is going — treemap and top consumers, instance-wide",
+    "license": "AGPL-3.0-or-later",
+    "require-dev": {
+        "nextcloud/ocp": "^33.0",
+        "phpunit/phpunit": "^10.0",
+        "doctrine/dbal": "^4.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "OCA\\DiskMap\\": "lib/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "OCA\\DiskMap\\Tests\\": "tests/"
+        },
+        "classmap": [
+            "vendor/nextcloud/ocp/OCP"
+        ]
+    },
+    "authors": [
+        {
+            "name": "Ricardo Ferreira",
+            "email": "ricardo.ferreira@jofebar.com"
+        }
+    ]
+}
