@@ -19,6 +19,11 @@ final class Scope {
     public const TYPE_USER = 'user';
     public const TYPE_TEAM_FOLDER = 'teamfolder';
     public const TYPE_STORAGE = 'storage';
+    // The whole instance: every user's home + every team folder, combined
+    // under one synthetic root (plan Phase 3d, admin-only). Unlike the other
+    // three types there's no single identifying id — "identifier" is always
+    // the empty string, kept only so every scope shares the same shape.
+    public const TYPE_INSTANCE = 'instance';
 
     private function __construct(
         public readonly string $type,
@@ -39,6 +44,10 @@ final class Scope {
         return new self(self::TYPE_STORAGE, (string)$numericStorageId, $path);
     }
 
+    public static function forInstance(string $path = ''): self {
+        return new self(self::TYPE_INSTANCE, '', $path);
+    }
+
     /**
      * Builds a scope from raw request input.
      *
@@ -53,6 +62,7 @@ final class Scope {
             self::TYPE_USER => self::forUser($identifier, $path),
             self::TYPE_TEAM_FOLDER => self::forTeamFolder(self::requireInt($type, $identifier), $path),
             self::TYPE_STORAGE => self::forStorage(self::requireInt($type, $identifier), $path),
+            self::TYPE_INSTANCE => self::forInstance($path),
             default => throw new \InvalidArgumentException("Unknown scope type: {$type}"),
         };
     }

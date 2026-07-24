@@ -2,6 +2,8 @@ OC.L10N.register(
     "diskmap",
     {
     "My storage" : "My storage",
+    "Whole server" : "Whole server",
+    "Could not load the instance overview." : "Could not load the instance overview.",
     "Could not load your storage overview." : "Could not load your storage overview.",
     "Could not load team folders." : "Could not load team folders.",
     "No team folders found." : "No team folders found.",

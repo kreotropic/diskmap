@@ -11,6 +11,11 @@
 					:active="selectedId === MY_STORAGE_ID"
 					@click="selectedId = MY_STORAGE_ID" />
 				<NcAppNavigationItem
+					v-if="isAdmin"
+					:name="t('diskmap', 'Whole server')"
+					:active="selectedId === INSTANCE_ID"
+					@click="selectedId = INSTANCE_ID" />
+				<NcAppNavigationItem
 					v-for="folder in teamFolders"
 					:key="folder.id"
 					:name="folder.name"
@@ -25,6 +30,7 @@
 
 		<NcAppContent>
 			<MyStorageView v-if="selectedId === MY_STORAGE_ID" :uid="uid" />
+			<InstanceView v-else-if="isAdmin && selectedId === INSTANCE_ID" />
 			<template v-else-if="isAdmin">
 				<NcLoadingIcon v-if="loading" :size="32" />
 				<NcNoteCard v-else-if="loadError" type="error">
@@ -53,11 +59,13 @@ import { getCurrentUser } from '@nextcloud/auth'
 
 import TeamFolderDetail from './views/TeamFolderDetail.vue'
 import MyStorageView from './views/MyStorageView.vue'
+import InstanceView from './views/InstanceView.vue'
 import { fetchTeamFolders } from './services/api.js'
 import { formatBytes } from './utils/format.js'
 
-// Sentinel nav selection distinct from any team folder id (those are ints).
+// Sentinel nav selections distinct from any team folder id (those are ints).
 const MY_STORAGE_ID = '__me__'
+const INSTANCE_ID = '__instance__'
 
 export default {
 	name: 'App',
@@ -71,11 +79,13 @@ export default {
 		NcNoteCard,
 		TeamFolderDetail,
 		MyStorageView,
+		InstanceView,
 	},
 	data() {
 		const user = getCurrentUser()
 		return {
 			MY_STORAGE_ID,
+			INSTANCE_ID,
 			uid: user?.uid ?? '',
 			isAdmin: user?.isAdmin ?? false,
 			teamFolders: [],

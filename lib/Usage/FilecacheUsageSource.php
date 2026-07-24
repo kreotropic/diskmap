@@ -32,10 +32,15 @@ class FilecacheUsageSource implements IUsageSource {
         private IDBConnection $db,
         private LayoutDetector $layoutDetector,
         private UserHomeResolver $userHomeResolver,
+        private InstanceIndex $instanceIndex,
     ) {
     }
 
     public function totalSize(Scope $scope): ?int {
+        if ($scope->type === Scope::TYPE_INSTANCE) {
+            return $this->instanceTotalSize();
+        }
+
         $root = $this->rootPath($scope);
         if ($root === null) {
             return null;
@@ -45,6 +50,10 @@ class FilecacheUsageSource implements IUsageSource {
     }
 
     public function lastUpdated(Scope $scope): ?int {
+        if ($scope->type === Scope::TYPE_INSTANCE) {
+            return $this->instanceLastUpdated();
+        }
+
         $root = $this->rootPath($scope);
         if ($root === null) {
             return null;
@@ -66,6 +75,10 @@ class FilecacheUsageSource implements IUsageSource {
     }
 
     public function children(Scope $scope, int $limit): array {
+        if ($scope->type === Scope::TYPE_INSTANCE) {
+            return $this->instanceChildren($scope, $limit);
+        }
+
         $root = $this->rootPath($scope);
         if ($root === null) {
             return ['root' => null, 'items' => [], 'truncated' => false];
@@ -121,6 +134,10 @@ class FilecacheUsageSource implements IUsageSource {
      * an unbounded number of round trips even before the node budget runs out.
      */
     public function mapTree(Scope $scope, int $maxNodes): array {
+        if ($scope->type === Scope::TYPE_INSTANCE) {
+            return $this->instanceMapTree($maxNodes);
+        }
+
         $root = $this->rootPath($scope);
         if ($root === null) {
             return ['root' => null];
@@ -133,6 +150,7 @@ class FilecacheUsageSource implements IUsageSource {
         }
 
         $builderRoot = $this->makeBuilderNode(
+            storageId: $storageId,
             fileid: $rootRow['fileid'],
             name: $rootRow['name'],
             size: $rootRow['size'],
@@ -141,10 +159,72 @@ class FilecacheUsageSource implements IUsageSource {
             mtime: $rootRow['mtime'],
         );
 
-        $budget = $maxNodes;
-        $queries = 0;
-        $frontier = [$builderRoot];
+        $this->expandFrontier([$builderRoot], $maxNodes);
 
+        return ['root' => $this->toUsageNode($builderRoot['ref'])];
+    }
+
+    /**
+     * The whole-instance map (plan Phase 3d, admin-only): every user's home
+     * + every team folder as top-level siblings — WinDirStat's own "each
+     * drive is its own top-level entry" convention, since there's no real
+     * common parent folder across independent storages to nest them under.
+     * Past the top level this is identical to the single-storage case
+     * (expandFrontier() doesn't know or care that its frontier started from
+     * several different storages instead of one).
+     */
+    private function instanceMapTree(int $maxNodes): array {
+        $entries = $this->instanceIndex->listAll();
+        usort($entries, static fn (InstanceTopLevelEntry $a, InstanceTopLevelEntry $b) => $b->size <=> $a->size);
+        $totalSize = array_sum(array_map(static fn (InstanceTopLevelEntry $e) => max(0, $e->size), $entries));
+
+        // Same node-budget principle as everywhere else in this tree: if the
+        // instance has more top-level entries than the budget allows, keep
+        // the biggest ones individually and fold the rest into one "other"
+        // tile rather than blowing the budget before any real expansion happens.
+        $keepCount = max(1, $maxNodes - 1);
+        $kept = array_slice($entries, 0, $keepCount);
+        $overflow = array_slice($entries, $keepCount);
+
+        $builderRoot = $this->makeBuilderNode(storageId: 0, fileid: 0, name: '', size: $totalSize, type: 'folder', mimetype: null, mtime: null);
+
+        $topNodes = array_map(fn (InstanceTopLevelEntry $e) => $this->makeBuilderNode(
+            storageId: $e->storageId,
+            fileid: $e->fileid,
+            name: $e->name,
+            size: $e->size,
+            type: 'folder',
+            mimetype: null,
+            mtime: $e->mtime,
+        ), $kept);
+
+        if (!empty($overflow)) {
+            $overflowSum = array_sum(array_map(static fn (InstanceTopLevelEntry $e) => max(0, $e->size), $overflow));
+            $topNodes[] = $this->makeOtherNode($overflowSum, count($overflow), true);
+        }
+
+        $builderRoot['ref']->children = $topNodes;
+
+        $this->expandFrontier($topNodes, max(1, $maxNodes - count($topNodes)));
+
+        return ['root' => $this->toUsageNode($builderRoot['ref'])];
+    }
+
+    private const TREE_LEVEL_LIMIT = 500;
+    private const MAX_TREE_QUERIES = 200;
+    private const SMALL_FILE_RATIO = 0.003;
+
+    /**
+     * The best-first expansion loop shared by mapTree() and
+     * instanceMapTree(): repeatedly pops the single largest still-expandable
+     * node from $frontier (regardless of which storage it came from — each
+     * builder node carries its own storageId) and fetches its children,
+     * until the node budget or the hard query cap is spent. See mapTree()'s
+     * own docblock for why best-first (not BFS/DFS) is what makes the
+     * budget land on the biggest, most map-relevant content.
+     */
+    private function expandFrontier(array $frontier, int $budget): void {
+        $queries = 0;
         while ($budget > 1 && $queries < self::MAX_TREE_QUERIES && !empty($frontier)) {
             usort($frontier, static fn (array $a, array $b) => $b['size'] <=> $a['size']);
             $node = array_shift($frontier);
@@ -152,7 +232,7 @@ class FilecacheUsageSource implements IUsageSource {
                 continue;
             }
 
-            [$rows, $truncated] = $this->fetchChildRows($storageId, $node['fileid'], self::TREE_LEVEL_LIMIT);
+            [$rows, $truncated] = $this->fetchChildRows($node['storageId'], $node['fileid'], self::TREE_LEVEL_LIMIT);
             $queries++;
             if (empty($rows)) {
                 continue; // stays a leaf tile — already attached to its parent
@@ -168,6 +248,7 @@ class FilecacheUsageSource implements IUsageSource {
                 $size = (int)$row['size'];
                 if ($size >= $threshold) {
                     $big[] = $this->makeBuilderNode(
+                        storageId: $node['storageId'],
                         fileid: (int)$row['fileid'],
                         name: (string)$row['name'],
                         size: $size,
@@ -191,17 +272,7 @@ class FilecacheUsageSource implements IUsageSource {
             $otherSize = max(0, $node['size'] - $bigSum);
             $newChildren = $big;
             if ($otherSize > 0 || $smallCount > 0) {
-                $newChildren[] = [
-                    'fileid' => 0,
-                    'name' => '',
-                    'size' => $otherSize,
-                    'type' => 'other',
-                    'mimetype' => null,
-                    'mtime' => null,
-                    'children' => null,
-                    'fileCount' => $smallCount,
-                    'countExact' => !$truncated,
-                ];
+                $newChildren[] = $this->makeOtherNode($otherSize, $smallCount, !$truncated);
             }
 
             $node['children'] = $newChildren;
@@ -221,13 +292,7 @@ class FilecacheUsageSource implements IUsageSource {
             // via the shared object wrapper each builder node carries.
             $node['ref']->children = $node['children'];
         }
-
-        return ['root' => $this->toUsageNode($builderRoot['ref'])];
     }
-
-    private const TREE_LEVEL_LIMIT = 500;
-    private const MAX_TREE_QUERIES = 200;
-    private const SMALL_FILE_RATIO = 0.003;
 
     /**
      * mapTree()'s in-progress nodes need to be both (a) sortable/poppable in
@@ -238,7 +303,7 @@ class FilecacheUsageSource implements IUsageSource {
      * 'ref' key to a small mutable object (for the shared mutation) —
      * toUsageNode() walks 'ref' objects into the final readonly tree.
      */
-    private function makeBuilderNode(int $fileid, string $name, int $size, string $type, ?string $mimetype, ?int $mtime): array {
+    private function makeBuilderNode(int $storageId, int $fileid, string $name, int $size, string $type, ?string $mimetype, ?int $mtime): array {
         $ref = new \stdClass();
         $ref->fileid = $fileid;
         $ref->name = $name;
@@ -250,11 +315,32 @@ class FilecacheUsageSource implements IUsageSource {
         $ref->fileCount = null;
         $ref->countExact = null;
         return [
+            'storageId' => $storageId,
             'fileid' => $fileid,
             'size' => $size,
             'type' => $type,
             'children' => null,
             'ref' => $ref,
+        ];
+    }
+
+    /**
+     * The synthetic "other" bucket, built as a plain array with no builder
+     * 'ref' object (see wrapSyntheticChild()) since it's never itself a
+     * candidate for further expansion — used both for small-file folding
+     * within one folder and for instance-level user/team-folder overflow.
+     */
+    private function makeOtherNode(int $size, int $count, bool $countExact): array {
+        return [
+            'fileid' => 0,
+            'name' => '',
+            'size' => $size,
+            'type' => 'other',
+            'mimetype' => null,
+            'mtime' => null,
+            'children' => null,
+            'fileCount' => $count,
+            'countExact' => $countExact,
         ];
     }
 
@@ -415,6 +501,80 @@ class FilecacheUsageSource implements IUsageSource {
         }
         $path = $layout->filesPath . ($subPath !== '' ? '/' . $subPath : '');
         return [$layout->filesStorageId, $path];
+    }
+
+    private function instanceTotalSize(): int {
+        return array_sum(array_map(
+            static fn (InstanceTopLevelEntry $e) => max(0, $e->size),
+            $this->instanceIndex->listAll(),
+        ));
+    }
+
+    private function instanceLastUpdated(): ?int {
+        $entries = $this->instanceIndex->listAll();
+        if (empty($entries)) {
+            return null;
+        }
+        return max(array_map(static fn (InstanceTopLevelEntry $e) => $e->mtime ?? 0, $entries));
+    }
+
+    /**
+     * children() for the whole-instance scope: at path='' every user + team
+     * folder is a top-level row (same flat "each storage is its own
+     * top-level entry" convention as instanceMapTree()); any deeper path
+     * delegates entirely to the real per-storage scope that top segment
+     * resolves to, via Scope::forStorage() — both a user's home and a team
+     * folder are, past their own root, indistinguishable from any other
+     * storage+path this class already knows how to browse.
+     */
+    private function instanceChildren(Scope $scope, int $limit): array {
+        if ($scope->path === '') {
+            $entries = $this->instanceIndex->listAll();
+            usort($entries, static fn (InstanceTopLevelEntry $a, InstanceTopLevelEntry $b) => $b->size <=> $a->size);
+            $totalSize = array_sum(array_map(static fn (InstanceTopLevelEntry $e) => max(0, $e->size), $entries));
+
+            $truncated = count($entries) > $limit;
+            $shown = $truncated ? array_slice($entries, 0, $limit) : $entries;
+
+            $items = array_map(fn (InstanceTopLevelEntry $e) => new UsageNode(
+                name: $e->name,
+                path: $e->name,
+                size: $e->size,
+                type: 'folder',
+                mimetype: null,
+                mtime: $e->mtime,
+                fileCount: $this->recursiveFileCount($e->storageId, $e->path, $e->size),
+            ), $shown);
+
+            return [
+                'root' => new UsageNode(name: '', path: '', size: $totalSize, type: 'folder'),
+                'items' => $items,
+                'truncated' => $truncated,
+            ];
+        }
+
+        $delegate = $this->resolveInstanceDelegate($scope->path);
+        if ($delegate === null) {
+            return ['root' => null, 'items' => [], 'truncated' => false];
+        }
+        return $this->children($delegate, $limit);
+    }
+
+    /**
+     * The first path segment under the instance scope is always a user's
+     * uid or a team folder's name — resolve it to the real, already-known
+     * [storageId, path] from InstanceIndex and hand the rest of the path to
+     * Scope::forStorage(), a plain passthrough rootPath() already handles.
+     */
+    private function resolveInstanceDelegate(string $path): ?Scope {
+        [$topName, $rest] = array_pad(explode('/', $path, 2), 2, '');
+        foreach ($this->instanceIndex->listAll() as $entry) {
+            if ($entry->name === $topName) {
+                $subPath = $entry->path . ($rest !== '' ? '/' . $rest : '');
+                return Scope::forStorage($entry->storageId, $subPath);
+            }
+        }
+        return null;
     }
 
     private function sizeAtExactPath(int $storageId, string $path): ?int {
