@@ -29,3 +29,15 @@ export function formatDate(timestamp) {
 	}
 	return new Date(timestamp * 1000).toLocaleString()
 }
+
+/**
+ * Format an integer count with locale thousands separators (e.g. the
+ * recursive file count column in FolderTree.vue). Null-safe: a missing
+ * count (not yet computed, or not applicable to this node) renders as '—'.
+ */
+export function formatCount(count) {
+	if (count === null || count === undefined || !Number.isFinite(count)) {
+		return '—'
+	}
+	return new Intl.NumberFormat().format(count)
+}

@@ -36,8 +36,32 @@ interface IUsageSource {
     public function lastUpdated(Scope $scope): ?int;
 
     /**
-     * @return UsageNode[] the $limit largest files under $scope (recursive,
-     *                      folders excluded), ordered by size descending.
+     * The immediate (one level deep, not recursive) children of $scope's
+     * path — both files and folders — ordered by size descending. Folder
+     * nodes carry their own recursive size total (already aggregated in
+     * filecache) and a recursive descendant file count (plan Phase 3b —
+     * a real query, not free, unlike size).
+     *
+     * @return array{
+     *     root: ?UsageNode,   // the folder at $scope's own path, or null if unresolved
+     *     items: UsageNode[], // its immediate children, size DESC, capped at $limit
+     *     truncated: bool,    // true if more children exist beyond $limit
+     * }
      */
-    public function largestFiles(Scope $scope, int $limit): array;
+    public function children(Scope $scope, int $limit): array;
+
+    /**
+     * A recursive tree of $scope (files nested inside folders, like a real
+     * WinDirStat map — plan Phase 3c) instead of a flat top-N list: folders
+     * are expanded largest-first, breadth-first-by-size, until $maxNodes'
+     * worth of tiles have been laid out, so a huge tree still renders in
+     * roughly bounded time/size — the parts that don't fit the budget stay
+     * as a single unexpanded folder tile (using its own precomputed
+     * recursive size, no accuracy lost, just less visual detail). Within any
+     * expanded folder, individually tiny children are folded into one
+     * synthetic 'other' child instead of each getting a sliver tile.
+     *
+     * @return array{root: ?UsageNode}
+     */
+    public function mapTree(Scope $scope, int $maxNodes): array;
 }

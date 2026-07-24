@@ -10,10 +10,22 @@ declare(strict_types=1);
 namespace OCA\DiskMap\Usage;
 
 /**
- * A single row in a usage listing: a file, a folder, or a synthetic bucket
- * such as the "others" node produced by Aggregator::withOthersBucket().
+ * A single row in a usage listing: a file, a folder, or a synthetic
+ * "everything else" bucket built on top of one.
  */
 final class UsageNode implements \JsonSerializable {
+    /**
+     * @param UsageNode[]|null $children Populated only by IUsageSource::mapTree():
+     *     null means "not expanded" (this node is drawn as its own tile), a
+     *     non-null array (possibly empty) means this folder's own tile is
+     *     replaced by these children in the map (WinDirStat-style: an
+     *     expanded folder is a spatial container, not a tile itself).
+     * @param int|null $countExact For a synthetic 'other' node folding many
+     *     small files together: true if $fileCount is the exact number
+     *     folded in, false if more exist beyond what was fetched (so the
+     *     frontend should render it as a "N+" lower bound). Null for every
+     *     non-synthetic node.
+     */
     public function __construct(
         public readonly string $name,
         public readonly string $path,
@@ -21,6 +33,12 @@ final class UsageNode implements \JsonSerializable {
         public readonly string $type, // 'file' | 'folder' | 'other'
         public readonly ?string $mimetype = null,
         public readonly ?int $mtime = null,
+        // Recursive descendant file count for a children()/mapTree() 'folder'
+        // node (plan Phase 3b), or the fold-in count for a mapTree() 'other'
+        // synthetic node. null for files and every node from largestFiles().
+        public readonly ?int $fileCount = null,
+        public readonly ?array $children = null,
+        public readonly ?bool $countExact = null,
     ) {
     }
 
@@ -32,6 +50,9 @@ final class UsageNode implements \JsonSerializable {
             'type' => $this->type,
             'mimetype' => $this->mimetype,
             'mtime' => $this->mtime,
+            'fileCount' => $this->fileCount,
+            'children' => $this->children,
+            'countExact' => $this->countExact,
         ];
     }
 }

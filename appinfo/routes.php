@@ -15,10 +15,16 @@ declare(strict_types=1);
  * can share the same aggregation code; admin-only endpoints are additionally
  * guarded in-controller via AdminController::requireAdmin().
  *
- * Phase 1 (team folder overview, top-N largest) and Phase 2 (personal
- * storage overview) endpoints are wired up so far (plan §11).
- * usage#tree (Phase 3), usage#mimetypes (Phase 4) and adminApi#groups
- * reconciliation (Phase 4) are added when their controllers land.
+ * Phase 1 (team folder overview) and Phase 2 (personal storage overview)
+ * endpoints are wired up so far (plan §11). usage#children (Phase 3b) is a
+ * NOT recursive, one-level "children of a path" endpoint powering the
+ * WinDirStat-style expandable tree pane. usage#map (Phase 3c) is the
+ * recursive, folder-nested tree the map renders — it replaced an earlier
+ * flat usage#largest (top-N files by size, no folder structure), removed
+ * once the map needed real folder clustering for tree→map folder
+ * highlighting to have anything to highlight. usage#mimetypes and
+ * adminApi#groups reconciliation (Phase 4) are added when their controllers
+ * land.
  */
 return [
     'routes' => [
@@ -27,8 +33,13 @@ return [
         // The caller's own files/trash/versions breakdown + quota occupancy.
         ['name' => 'usage#myOverview', 'url' => '/api/v1/my/overview', 'verb' => 'GET'],
 
-        // Top-N largest files/folders in an explicit scope (user|teamfolder|storage).
-        ['name' => 'usage#largest', 'url' => '/api/v1/largest', 'verb' => 'GET'],
+        // One level of children (files + folders) under a scope+path — not recursive.
+        ['name' => 'usage#children', 'url' => '/api/v1/children', 'verb' => 'GET'],
+
+        // Recursive, folder-nested tree for the map (Phase 3c) — files nested
+        // inside folders, node-budgeted, so a folder click in the tree pane
+        // can highlight its whole region in the map (real WinDirStat behavior).
+        ['name' => 'usage#map', 'url' => '/api/v1/map', 'verb' => 'GET'],
 
         // Admin-only: team folder overview (used/quota, files/trash/versions, linked groups).
         ['name' => 'adminApi#teamFolders', 'url' => '/api/v1/admin/teamfolders', 'verb' => 'GET'],

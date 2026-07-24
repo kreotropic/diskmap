@@ -27,14 +27,30 @@ export async function fetchMyOverview() {
 }
 
 /**
- * Fetch the largest files within an explicit scope.
+ * Fetch one level of immediate children (files and folders) under an
+ * explicit scope + path — not recursive.
  *
  * @param {string} scope 'user' | 'teamfolder' | 'storage'
  * @param {string|number} identifier uid, team folder id, or numeric storage id
  * @param {object} params { path, limit }
  */
-export async function fetchLargest(scope, identifier, params = {}) {
-	const { data } = await axios.get(base('/api/v1/largest'), {
+export async function fetchChildren(scope, identifier, params = {}) {
+	const { data } = await axios.get(base('/api/v1/children'), {
+		params: { scope, identifier, ...params },
+	})
+	return data
+}
+
+/**
+ * Fetch the recursive, folder-nested tree the map renders (files nested
+ * inside folders, node-budgeted — see UsageController::map()).
+ *
+ * @param {string} scope 'user' | 'teamfolder' | 'storage'
+ * @param {string|number} identifier uid, team folder id, or numeric storage id
+ * @param {object} params { path, maxNodes }
+ */
+export async function fetchMap(scope, identifier, params = {}) {
+	const { data } = await axios.get(base('/api/v1/map'), {
 		params: { scope, identifier, ...params },
 	})
 	return data

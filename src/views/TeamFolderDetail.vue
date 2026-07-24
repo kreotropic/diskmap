@@ -4,112 +4,194 @@
   -->
 <template>
 	<div class="teamfolder-detail">
-		<h2>{{ folder.name }}</h2>
+		<div class="teamfolder-detail__header">
+			<h2>{{ folder.name }}</h2>
+			<span class="teamfolder-detail__sep">·</span>
+			<span><strong>{{ formatBytes(folder.used) }}</strong> {{ t('diskmap', 'used') }}</span>
+			<span class="teamfolder-detail__sep">·</span>
+			<span>{{ t('diskmap', 'Quota') }} <strong>{{ folder.quota !== null ? formatBytes(folder.quota) : t('diskmap', 'Unlimited') }}</strong></span>
+			<span class="teamfolder-detail__sep">·</span>
+			<span><strong>{{ formatBytes(folder.filesSize) }}</strong> {{ t('diskmap', 'files') }}</span>
+			<span class="teamfolder-detail__sep">·</span>
+			<span><strong>{{ formatBytes(folder.trashSize) }}</strong> {{ t('diskmap', 'trash') }}</span>
+			<template v-if="folder.versionsSize > 0">
+				<span class="teamfolder-detail__sep">·</span>
+				<span><strong>{{ formatBytes(folder.versionsSize) }}</strong> {{ t('diskmap', 'versions') }}</span>
+			</template>
+			<template v-if="folder.occupancyPercent !== null">
+				<span class="teamfolder-detail__sep">·</span>
+				<span><strong>{{ folder.occupancyPercent }}%</strong> {{ t('diskmap', 'occupancy') }}</span>
+			</template>
+			<template v-if="folder.groups.length">
+				<span class="teamfolder-detail__sep">·</span>
+				<span>{{ t('diskmap', 'Groups') }}: <strong>{{ groupNames }}</strong></span>
+			</template>
+			<button
+				type="button"
+				class="teamfolder-detail__info"
+				:title="t('diskmap', 'Reflects the file cache as of {date}.', { date: lastUpdatedLabel })"
+				:aria-label="t('diskmap', 'Reflects the file cache as of {date}.', { date: lastUpdatedLabel })">
+				ⓘ
+			</button>
+		</div>
 
-		<NcNoteCard type="info" class="teamfolder-detail__last-updated">
-			{{ t('diskmap', 'Reflects the file cache as of {date}.', { date: lastUpdatedLabel }) }}
-		</NcNoteCard>
-
-		<dl class="teamfolder-detail__stats">
-			<div class="stat">
-				<dt>{{ t('diskmap', 'Used') }}</dt>
-				<dd>{{ formatBytes(folder.used) }}</dd>
-			</div>
-			<div class="stat">
-				<dt>{{ t('diskmap', 'Quota') }}</dt>
-				<dd>{{ folder.quota !== null ? formatBytes(folder.quota) : t('diskmap', 'Unlimited') }}</dd>
-			</div>
-			<div v-if="folder.occupancyPercent !== null" class="stat">
-				<dt>{{ t('diskmap', 'Occupancy') }}</dt>
-				<dd>{{ folder.occupancyPercent }}%</dd>
-			</div>
-			<div class="stat">
-				<dt>{{ t('diskmap', 'Files') }}</dt>
-				<dd>{{ formatBytes(folder.filesSize) }}</dd>
-			</div>
-			<div class="stat">
-				<dt>{{ t('diskmap', 'Trash') }}</dt>
-				<dd>{{ formatBytes(folder.trashSize) }}</dd>
-			</div>
-			<div class="stat">
-				<dt>{{ t('diskmap', 'Versions') }}</dt>
-				<dd>{{ formatBytes(folder.versionsSize) }}</dd>
-			</div>
-		</dl>
-
-		<h3>{{ t('diskmap', 'Groups') }}</h3>
-		<ul v-if="folder.groups.length" class="teamfolder-detail__groups">
-			<li v-for="group in folder.groups" :key="group.type + ':' + group.id">
-				{{ group.type === 'circle' ? t('diskmap', 'Team') : t('diskmap', 'Group') }}: {{ group.id }}
-			</li>
-		</ul>
-		<p v-else>
-			{{ t('diskmap', 'Not linked to any group.') }}
-		</p>
-
-		<LargestFilesPanel scope="teamfolder" :identifier="folder.id" />
+		<div class="teamfolder-detail__panels">
+			<Splitpanes horizontal @resized="onPanesResized">
+				<Pane :size="paneSizes[0]" :min-size="15">
+					<FolderTree
+						ref="folderTree"
+						:key="folder.id"
+						scope="teamfolder"
+						:identifier="folder.id"
+						:root-label="folder.name"
+						:folder-name="folder.name"
+						@select-path="onSelectPath" />
+				</Pane>
+				<Pane :size="paneSizes[1]" :min-size="15">
+					<Treemap
+						ref="treemap"
+						:key="folder.id"
+						scope="teamfolder"
+						:identifier="folder.id"
+						:folder-name="folder.name"
+						@reveal-path="onRevealPath" />
+				</Pane>
+			</Splitpanes>
+		</div>
 	</div>
 </template>
 
 <script>
-import NcNoteCard from '@nextcloud/vue/components/NcNoteCard'
+import { Splitpanes, Pane } from 'splitpanes'
 import { translate as t } from '@nextcloud/l10n'
 
-import LargestFilesPanel from '../components/LargestFilesPanel.vue'
+import FolderTree from '../components/FolderTree.vue'
+import Treemap from '../components/Treemap.vue'
 import { formatBytes, formatDate } from '../utils/format.js'
+import { loadPaneSizes, savePaneSizes } from '../utils/panelSplit.js'
 
 export default {
 	name: 'TeamFolderDetail',
-	components: { NcNoteCard, LargestFilesPanel },
+	components: { Treemap, FolderTree, Splitpanes, Pane },
 	props: {
 		folder: { type: Object, required: true },
+	},
+	data() {
+		return {
+			paneSizes: loadPaneSizes(),
+		}
 	},
 	computed: {
 		lastUpdatedLabel() {
 			return this.folder.lastUpdated ? formatDate(this.folder.lastUpdated) : t('diskmap', 'unknown')
 		},
+		groupNames() {
+			return this.folder.groups.map((group) => group.id).join(', ')
+		},
 	},
 	methods: {
 		t,
 		formatBytes,
+		onRevealPath(path) {
+			this.$refs.folderTree?.revealPath(path)
+		},
+		onSelectPath(payload) {
+			this.$refs.treemap?.focusPath(payload)
+		},
+		onPanesResized(event) {
+			const sizes = event.panes.map((pane) => pane.size)
+			this.paneSizes = sizes
+			savePaneSizes(sizes)
+		},
 	},
 }
 </script>
 
 <style scoped>
 .teamfolder-detail {
-	padding: 20px;
-	max-width: 900px;
+	height: 100%;
+	/* Top padding clears NcAppNavigation's collapse toggle, which sits
+	   absolutely positioned at top:8px + 34px tall (--app-navigation-padding
+	   + --default-clickable-area) right at this corner. Rather than pushing
+	   everything down to clear it (wasting a full row of height), only the
+	   header row gets extra *left* padding, so the title sits beside the
+	   toggle on the same line instead of below it. Top padding is tuned so
+	   the header row's vertical center lines up with the toggle's center. */
+	padding: 5px 20px 12px;
+	box-sizing: border-box;
+	display: flex;
+	flex-direction: column;
+	overflow: hidden;
 }
 
-.teamfolder-detail__last-updated {
-	margin-bottom: 16px;
-}
-
-.teamfolder-detail__stats {
+.teamfolder-detail__header {
+	flex-shrink: 0;
 	display: flex;
 	flex-wrap: wrap;
-	gap: 16px;
-	margin: 0 0 24px;
+	align-items: center;
+	gap: 6px;
+	row-gap: 2px;
+	padding-left: 40px;
 }
 
-.teamfolder-detail__stats .stat {
-	min-width: 120px;
-}
-
-.teamfolder-detail__stats dt {
-	color: var(--color-text-maxcontrast);
-	font-size: 0.85em;
-}
-
-.teamfolder-detail__stats dd {
+.teamfolder-detail__header h2 {
 	margin: 0;
 	font-size: 1.3em;
-	font-weight: bold;
 }
 
-.teamfolder-detail__groups {
-	list-style: none;
-	padding: 0;
+.teamfolder-detail__sep {
+	color: var(--color-text-maxcontrast);
+}
+
+.teamfolder-detail__info {
+	margin-inline-start: auto;
+	background: none;
+	border: none;
+	cursor: help;
+	color: var(--color-text-maxcontrast);
+	font-size: 1.1em;
+	padding: 0 2px;
+	align-self: center;
+}
+
+/* WinDirStat-style split: tree on top, map below, together filling
+   whatever viewport height is left under the header above. No panel
+   headings — the tree/map are visually self-explanatory, and every pixel
+   here is height the panels don't get. The split ratio is user-draggable
+   (see .splitpanes__splitter below) and persisted via panelSplit.js. */
+.teamfolder-detail__panels {
+	flex: 1 1 auto;
+	min-height: 0;
+	margin-top: 6px;
+}
+
+.teamfolder-detail__panels :deep(.splitpanes__pane) {
+	background: transparent;
+}
+
+.teamfolder-detail__panels :deep(.splitpanes--horizontal > .splitpanes__splitter) {
+	position: relative;
+	height: 8px;
+	margin-top: -1px;
+	border-top: 1px solid var(--color-border);
+	border-bottom: 1px solid var(--color-border);
+	background: var(--color-main-background);
+	cursor: row-resize;
+}
+
+.teamfolder-detail__panels :deep(.splitpanes--horizontal > .splitpanes__splitter:hover) {
+	background: var(--color-background-hover);
+}
+
+.teamfolder-detail__panels :deep(.splitpanes--horizontal > .splitpanes__splitter::before) {
+	content: '';
+	position: absolute;
+	top: 50%;
+	left: 50%;
+	transform: translate(-50%, -50%);
+	width: 32px;
+	height: 3px;
+	border-radius: 2px;
+	background: var(--color-border-dark);
 }
 </style>

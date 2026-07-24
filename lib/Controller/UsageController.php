@@ -62,9 +62,17 @@ class UsageController extends Controller {
         return new JSONResponse($this->userStorageService->overview($user));
     }
 
+    /**
+     * One level of immediate children (files and folders) under $scope's
+     * path — NOT recursive, unlike map(). Powers the WinDirStat-style
+     * expandable tree pane (plan Phase 3b): each expand click fetches
+     * exactly one more level. Folder rows carry a recursive descendant file
+     * count (a real query, accepted as a known perf risk not yet validated
+     * at production scale — see plan).
+     */
     #[NoAdminRequired]
-    public function largest(string $scope, string $identifier, string $path = '', int $limit = 50): JSONResponse {
-        $limit = max(1, min($limit, 200));
+    public function children(string $scope, string $identifier, string $path = '', int $limit = 200): JSONResponse {
+        $limit = max(1, min($limit, 1000));
 
         try {
             $scopeObj = Scope::fromRequest($scope, $identifier, $path);
@@ -77,11 +85,49 @@ class UsageController extends Controller {
             return $denied;
         }
 
+        $result = $this->usageSource->children($scopeObj, $limit);
+
         return new JSONResponse([
             'scope' => $scopeObj->type,
             'identifier' => $scopeObj->identifier,
             'path' => $scopeObj->path,
-            'items' => $this->usageSource->largestFiles($scopeObj, $limit),
+            'root' => $result['root'],
+            'items' => $result['items'],
+            'truncated' => $result['truncated'],
+        ]);
+    }
+
+    /**
+     * The recursive, folder-nested tree the map (Treemap.vue) renders (plan
+     * Phase 3c) — files nested inside folders, like a real WinDirStat map.
+     * Replaced an earlier flat top-N-files-by-size endpoint (usage#largest,
+     * removed): that version couldn't cluster files by folder, so selecting
+     * a folder in the tree pane had no matching region to highlight in the
+     * map. Node-budgeted (see IUsageSource::mapTree()) so a huge scope still
+     * returns in roughly bounded time.
+     */
+    #[NoAdminRequired]
+    public function map(string $scope, string $identifier, string $path = '', int $maxNodes = 400): JSONResponse {
+        $maxNodes = max(20, min($maxNodes, 800));
+
+        try {
+            $scopeObj = Scope::fromRequest($scope, $identifier, $path);
+        } catch (\InvalidArgumentException $e) {
+            return new JSONResponse(['message' => $e->getMessage()], Http::STATUS_BAD_REQUEST);
+        }
+
+        $denied = $this->enforceScopeAccess($scopeObj);
+        if ($denied !== null) {
+            return $denied;
+        }
+
+        $result = $this->usageSource->mapTree($scopeObj, $maxNodes);
+
+        return new JSONResponse([
+            'scope' => $scopeObj->type,
+            'identifier' => $scopeObj->identifier,
+            'path' => $scopeObj->path,
+            'root' => $result['root'],
             'lastUpdated' => $this->usageSource->lastUpdated($scopeObj),
         ]);
     }

@@ -4,61 +4,73 @@
   -->
 <template>
 	<div class="my-storage">
-		<h2>{{ t('diskmap', 'My storage') }}</h2>
-
 		<NcLoadingIcon v-if="loading" :size="32" />
 		<NcNoteCard v-else-if="loadError" type="error">
 			{{ t('diskmap', 'Could not load your storage overview.') }}
 		</NcNoteCard>
+
 		<template v-else>
-			<NcNoteCard type="info" class="my-storage__last-updated">
-				{{ t('diskmap', 'Reflects the file cache as of {date}.', { date: lastUpdatedLabel }) }}
-			</NcNoteCard>
+			<div class="my-storage__header">
+				<h2>{{ t('diskmap', 'My storage') }}</h2>
+				<span class="my-storage__sep">·</span>
+				<span><strong>{{ formatBytes(overview.used) }}</strong> {{ t('diskmap', 'used') }}</span>
+				<span class="my-storage__sep">·</span>
+				<span>{{ t('diskmap', 'Quota') }} <strong>{{ overview.quota !== null ? formatBytes(overview.quota) : t('diskmap', 'Unlimited') }}</strong></span>
+				<span class="my-storage__sep">·</span>
+				<span><strong>{{ formatBytes(overview.filesSize) }}</strong> {{ t('diskmap', 'files') }}</span>
+				<span class="my-storage__sep">·</span>
+				<span><strong>{{ formatBytes(overview.trashSize) }}</strong> {{ t('diskmap', 'trash') }}</span>
+				<template v-if="overview.versionsSize > 0">
+					<span class="my-storage__sep">·</span>
+					<span><strong>{{ formatBytes(overview.versionsSize) }}</strong> {{ t('diskmap', 'versions') }}</span>
+				</template>
+				<template v-if="overview.occupancyPercent !== null">
+					<span class="my-storage__sep">·</span>
+					<span><strong>{{ overview.occupancyPercent }}%</strong> {{ t('diskmap', 'occupancy') }}</span>
+				</template>
+				<button
+					type="button"
+					class="my-storage__info"
+					:title="t('diskmap', 'Reflects the file cache as of {date}.', { date: lastUpdatedLabel })"
+					:aria-label="t('diskmap', 'Reflects the file cache as of {date}.', { date: lastUpdatedLabel })">
+					ⓘ
+				</button>
+			</div>
 
-			<dl class="my-storage__stats">
-				<div class="stat">
-					<dt>{{ t('diskmap', 'Used') }}</dt>
-					<dd>{{ formatBytes(overview.used) }}</dd>
-				</div>
-				<div class="stat">
-					<dt>{{ t('diskmap', 'Quota') }}</dt>
-					<dd>{{ overview.quota !== null ? formatBytes(overview.quota) : t('diskmap', 'Unlimited') }}</dd>
-				</div>
-				<div v-if="overview.occupancyPercent !== null" class="stat">
-					<dt>{{ t('diskmap', 'Occupancy') }}</dt>
-					<dd>{{ overview.occupancyPercent }}%</dd>
-				</div>
-				<div class="stat">
-					<dt>{{ t('diskmap', 'Files') }}</dt>
-					<dd>{{ formatBytes(overview.filesSize) }}</dd>
-				</div>
-				<div class="stat">
-					<dt>{{ t('diskmap', 'Trash') }}</dt>
-					<dd>{{ formatBytes(overview.trashSize) }}</dd>
-				</div>
-				<div class="stat">
-					<dt>{{ t('diskmap', 'Versions') }}</dt>
-					<dd>{{ formatBytes(overview.versionsSize) }}</dd>
-				</div>
-			</dl>
-
-			<LargestFilesPanel scope="user" :identifier="uid" />
+			<div class="my-storage__panels">
+				<Splitpanes horizontal @resized="onPanesResized">
+					<Pane :size="paneSizes[0]" :min-size="15">
+						<FolderTree
+							ref="folderTree"
+							scope="user"
+							:identifier="uid"
+							:root-label="t('diskmap', 'My storage')"
+							@select-path="onSelectPath" />
+					</Pane>
+					<Pane :size="paneSizes[1]" :min-size="15">
+						<Treemap ref="treemap" scope="user" :identifier="uid" @reveal-path="onRevealPath" />
+					</Pane>
+				</Splitpanes>
+			</div>
 		</template>
 	</div>
 </template>
 
 <script>
+import { Splitpanes, Pane } from 'splitpanes'
 import NcLoadingIcon from '@nextcloud/vue/components/NcLoadingIcon'
 import NcNoteCard from '@nextcloud/vue/components/NcNoteCard'
 import { translate as t } from '@nextcloud/l10n'
 
-import LargestFilesPanel from '../components/LargestFilesPanel.vue'
+import FolderTree from '../components/FolderTree.vue'
+import Treemap from '../components/Treemap.vue'
 import { fetchMyOverview } from '../services/api.js'
 import { formatBytes, formatDate } from '../utils/format.js'
+import { loadPaneSizes, savePaneSizes } from '../utils/panelSplit.js'
 
 export default {
 	name: 'MyStorageView',
-	components: { NcLoadingIcon, NcNoteCard, LargestFilesPanel },
+	components: { NcLoadingIcon, NcNoteCard, Treemap, FolderTree, Splitpanes, Pane },
 	props: {
 		uid: { type: String, required: true },
 	},
@@ -67,6 +79,7 @@ export default {
 			overview: null,
 			loading: true,
 			loadError: false,
+			paneSizes: loadPaneSizes(),
 		}
 	},
 	computed: {
@@ -86,39 +99,106 @@ export default {
 	methods: {
 		t,
 		formatBytes,
+		onRevealPath(path) {
+			this.$refs.folderTree?.revealPath(path)
+		},
+		onSelectPath(payload) {
+			this.$refs.treemap?.focusPath(payload)
+		},
+		onPanesResized(event) {
+			const sizes = event.panes.map((pane) => pane.size)
+			this.paneSizes = sizes
+			savePaneSizes(sizes)
+		},
 	},
 }
 </script>
 
 <style scoped>
 .my-storage {
-	padding: 20px;
-	max-width: 900px;
+	height: 100%;
+	/* Top padding clears NcAppNavigation's collapse toggle, which sits
+	   absolutely positioned at top:8px + 34px tall (--app-navigation-padding
+	   + --default-clickable-area) right at this corner. Rather than pushing
+	   everything down to clear it (wasting a full row of height), only the
+	   header row gets extra *left* padding, so the title sits beside the
+	   toggle on the same line instead of below it. Top padding is tuned so
+	   the header row's vertical center lines up with the toggle's center. */
+	padding: 5px 20px 12px;
+	box-sizing: border-box;
+	display: flex;
+	flex-direction: column;
+	overflow: hidden;
 }
 
-.my-storage__last-updated {
-	margin-bottom: 16px;
-}
-
-.my-storage__stats {
+.my-storage__header {
+	flex-shrink: 0;
 	display: flex;
 	flex-wrap: wrap;
-	gap: 16px;
-	margin: 0 0 24px;
+	align-items: center;
+	gap: 6px;
+	row-gap: 2px;
+	padding-left: 40px;
 }
 
-.my-storage__stats .stat {
-	min-width: 120px;
-}
-
-.my-storage__stats dt {
-	color: var(--color-text-maxcontrast);
-	font-size: 0.85em;
-}
-
-.my-storage__stats dd {
+.my-storage__header h2 {
 	margin: 0;
 	font-size: 1.3em;
-	font-weight: bold;
+}
+
+.my-storage__sep {
+	color: var(--color-text-maxcontrast);
+}
+
+.my-storage__info {
+	margin-inline-start: auto;
+	background: none;
+	border: none;
+	cursor: help;
+	color: var(--color-text-maxcontrast);
+	font-size: 1.1em;
+	padding: 0 2px;
+	align-self: center;
+}
+
+/* WinDirStat-style split: tree on top, map below, together filling
+   whatever viewport height is left under the header above. No panel
+   headings — the tree/map are visually self-explanatory, and every pixel
+   here is height the panels don't get. The split ratio is user-draggable
+   (see .splitpanes__splitter below) and persisted via panelSplit.js. */
+.my-storage__panels {
+	flex: 1 1 auto;
+	min-height: 0;
+	margin-top: 6px;
+}
+
+.my-storage__panels :deep(.splitpanes__pane) {
+	background: transparent;
+}
+
+.my-storage__panels :deep(.splitpanes--horizontal > .splitpanes__splitter) {
+	position: relative;
+	height: 8px;
+	margin-top: -1px;
+	border-top: 1px solid var(--color-border);
+	border-bottom: 1px solid var(--color-border);
+	background: var(--color-main-background);
+	cursor: row-resize;
+}
+
+.my-storage__panels :deep(.splitpanes--horizontal > .splitpanes__splitter:hover) {
+	background: var(--color-background-hover);
+}
+
+.my-storage__panels :deep(.splitpanes--horizontal > .splitpanes__splitter::before) {
+	content: '';
+	position: absolute;
+	top: 50%;
+	left: 50%;
+	transform: translate(-50%, -50%);
+	width: 32px;
+	height: 3px;
+	border-radius: 2px;
+	background: var(--color-border-dark);
 }
 </style>
