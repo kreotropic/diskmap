@@ -11,6 +11,7 @@ namespace OCA\DiskMap\Usage;
 
 use OCA\DiskMap\GroupFolders\LayoutDetector;
 use OCP\DB\QueryBuilder\IQueryBuilder;
+use OCP\IConfig;
 use OCP\IDBConnection;
 
 /**
@@ -29,12 +30,16 @@ class InstanceIndex {
     public function __construct(
         private IDBConnection $db,
         private LayoutDetector $layoutDetector,
+        private IConfig $config,
     ) {
     }
 
     /** @return InstanceTopLevelEntry[] */
     public function listAll(): array {
-        return [...$this->listUsers(), ...$this->listTeamFolders()];
+        $teamFolders = $this->listTeamFolders();
+        $teamFolderStorageIds = array_map(static fn (InstanceTopLevelEntry $e) => $e->storageId, $teamFolders);
+
+        return [...$this->listUsers(), ...$teamFolders, ...$this->listExternalStorages($teamFolderStorageIds)];
     }
 
     /**
@@ -123,6 +128,86 @@ class InstanceIndex {
         }
 
         return $entries;
+    }
+
+    /**
+     * Every remaining storage — anything that isn't a user home or a live
+     * team folder — read as "external storage": SMB/S3/WebDAV/local
+     * mounts configured via the files_external app, but also anything else
+     * this app doesn't have a name for yet (e.g. an orphaned team-folder
+     * storage whose oc_group_folders row was deleted but the storage
+     * itself wasn't — genuinely worth an admin's attention, not hidden).
+     *
+     * Deliberately NOT joined against oc_external_mounts: that table has no
+     * direct storage-id column (each backend type constructs its own
+     * oc_storages.id string from its own config columns at runtime, so
+     * there's no single stable join path across backend types). Reading
+     * oc_storages directly instead means this works for every backend
+     * without backend-specific parsing, at the cost of a less friendly
+     * display name (the raw storage id minus its "backend::" prefix,
+     * rather than the admin-configured mount point).
+     *
+     * @param int[] $excludeStorageIds team-folder storage ids, already
+     *     listed by listTeamFolders() — excluded here so a folder never
+     *     appears twice under two different categories.
+     * @return InstanceTopLevelEntry[]
+     */
+    private function listExternalStorages(array $excludeStorageIds): array {
+        // Nextcloud's own internal "whole data directory" storage — every
+        // user's home already exposes the same files under home::<uid>, so
+        // listing this too would double-count everyone's data as "external".
+        $dataDir = rtrim($this->config->getSystemValueString('datadirectory', '/var/www/html/data'), '/');
+        $dataDirStorageKey = 'local::' . $dataDir . '/';
+
+        $qb = $this->db->getQueryBuilder();
+        $qb->select('s.id', 's.numeric_id', 'f.fileid', 'f.size', 'f.mtime')
+            ->from('storages', 's')
+            ->innerJoin('s', 'filecache', 'f', $qb->expr()->andX(
+                $qb->expr()->eq('f.storage', 's.numeric_id'),
+                $qb->expr()->eq('f.path', $qb->createNamedParameter('')),
+            ))
+            ->where($qb->expr()->notLike('s.id', $qb->createNamedParameter('home::%')))
+            ->andWhere($qb->expr()->notLike('s.id', $qb->createNamedParameter('object::user:%')));
+
+        $result = $qb->executeQuery();
+        $entries = [];
+        while ($row = $result->fetchAssociative()) {
+            $storageKey = (string)$row['id'];
+            $numericId = (int)$row['numeric_id'];
+            if ($storageKey === $dataDirStorageKey || in_array($numericId, $excludeStorageIds, true)) {
+                continue;
+            }
+
+            $entries[] = new InstanceTopLevelEntry(
+                name: $this->externalDisplayName($storageKey),
+                kind: 'external',
+                storageId: $numericId,
+                path: '',
+                fileid: (int)$row['fileid'],
+                size: (int)$row['size'],
+                mtime: $row['mtime'] !== null ? (int)$row['mtime'] : null,
+            );
+        }
+        $result->closeCursor();
+
+        return $entries;
+    }
+
+    /**
+     * The raw storage id minus its "backend::" prefix, e.g.
+     * "local::/tmp/nc-exttest/" → "tmp/nc-exttest". Trimmed of leading/
+     * trailing slashes deliberately — this name becomes a single path
+     * *segment* the tree/map build navPaths and ancestor chains out of
+     * (FolderTree.vue's navPath, Treemap.vue's pathFor()), and a leading or
+     * trailing slash there would produce a malformed "//" once a real child
+     * segment gets appended. Internal slashes (still possible for a nested
+     * path like this) are fine — resolveInstanceDelegate() matches the
+     * whole name as a path prefix, not by splitting on '/' first.
+     */
+    private function externalDisplayName(string $storageKey): string {
+        $sep = strpos($storageKey, '::');
+        $rest = $sep !== false ? substr($storageKey, $sep + 2) : $storageKey;
+        return trim($rest, '/');
     }
 
     /**

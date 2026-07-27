@@ -39,6 +39,11 @@ final class UsageNode implements \JsonSerializable {
         public readonly ?int $fileCount = null,
         public readonly ?array $children = null,
         public readonly ?bool $countExact = null,
+        // 'user' | 'teamfolder' | 'external' — only set on a top-level row
+        // of the whole-instance scope (plan Phase 3d), so the tree pane can
+        // tell the three apart at a glance. Null everywhere else, including
+        // every deeper folder inside one of them (those are just folders).
+        public readonly ?string $kind = null,
     ) {
     }
 
@@ -53,6 +58,7 @@ final class UsageNode implements \JsonSerializable {
             'fileCount' => $this->fileCount,
             'children' => $this->children,
             'countExact' => $this->countExact,
+            'kind' => $this->kind,
         ];
     }
 }

@@ -429,11 +429,18 @@ class FilecacheUsageSource implements IUsageSource {
             return 0;
         }
 
+        // path='' only happens for an external storage's own root (plan
+        // Phase 3d — its root filecache row lives at the literal empty
+        // path, unlike a user/team-folder root which always starts under
+        // "files"). Its children's paths have no leading slash to match, so
+        // the pattern must be a bare '%' there instead of '<path>/%'.
+        $likePattern = $path !== '' ? $this->db->escapeLikeParameter($path) . '/%' : '%';
+
         $sql = 'SELECT COUNT(*) AS c FROM `*PREFIX*filecache` USE INDEX (fs_storage_path_prefix)
                 WHERE storage = ? AND path LIKE ?';
         $result = $this->db->executeQuery($sql, [
             $storageId,
-            $this->db->escapeLikeParameter($path) . '/%',
+            $likePattern,
         ]);
         $row = $result->fetchAssociative();
         $result->closeCursor();
@@ -544,6 +551,7 @@ class FilecacheUsageSource implements IUsageSource {
                 mimetype: null,
                 mtime: $e->mtime,
                 fileCount: $this->recursiveFileCount($e->storageId, $e->path, $e->size),
+                kind: $e->kind,
             ), $shown);
 
             return [
@@ -561,20 +569,38 @@ class FilecacheUsageSource implements IUsageSource {
     }
 
     /**
-     * The first path segment under the instance scope is always a user's
-     * uid or a team folder's name — resolve it to the real, already-known
-     * [storageId, path] from InstanceIndex and hand the rest of the path to
-     * Scope::forStorage(), a plain passthrough rootPath() already handles.
+     * The start of the path under the instance scope always names one
+     * top-level entry — a user's uid, a team folder's mount point, or an
+     * external storage's display name — resolve it to the real,
+     * already-known [storageId, path] from InstanceIndex and hand the rest
+     * to Scope::forStorage(), a plain passthrough rootPath() already
+     * handles. Matched as a path *prefix*, not just the first '/'-segment:
+     * an external storage's display name can itself contain slashes (e.g.
+     * "tmp/nc-exttest" from a local-backend mount), so splitting on the
+     * first '/' would never match it. Picks the longest matching entry name
+     * in case one entry's name happens to be a prefix of another's.
      */
     private function resolveInstanceDelegate(string $path): ?Scope {
-        [$topName, $rest] = array_pad(explode('/', $path, 2), 2, '');
+        $best = null;
         foreach ($this->instanceIndex->listAll() as $entry) {
-            if ($entry->name === $topName) {
-                $subPath = $entry->path . ($rest !== '' ? '/' . $rest : '');
-                return Scope::forStorage($entry->storageId, $subPath);
+            $isMatch = $path === $entry->name || str_starts_with($path, $entry->name . '/');
+            if ($isMatch && ($best === null || strlen($entry->name) > strlen($best->name))) {
+                $best = $entry;
             }
         }
-        return null;
+        if ($best === null) {
+            return null;
+        }
+
+        $rest = $path === $best->name ? '' : substr($path, strlen($best->name) + 1);
+        // entry->path is '' for external storages (their root is at the
+        // literal empty filecache path, unlike a user/team-folder root
+        // which always starts at "files") — only join with '/' when
+        // there's a real prefix to join onto, or an external storage's own
+        // top-level children would get a bogus leading slash that doesn't
+        // match any real filecache path.
+        $subPath = $best->path !== '' ? $best->path . ($rest !== '' ? '/' . $rest : '') : $rest;
+        return Scope::forStorage($best->storageId, $subPath);
     }
 
     private function sizeAtExactPath(int $storageId, string $path): ?int {

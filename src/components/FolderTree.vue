@@ -37,7 +37,7 @@
 							<span v-if="node.loadingChildren" class="dm-tree__spinner" />
 						</button>
 						<span v-else class="dm-tree__arrow-placeholder" />
-						<span class="dm-tree__icon">{{ node.type === 'folder' ? '📁' : '📄' }}</span>
+						<span class="dm-tree__icon">{{ iconFor(node) }}</span>
 						<span class="dm-tree__name">{{ node.name }}</span>
 					</span>
 					<span class="dm-tree__col-bar">
@@ -130,6 +130,7 @@ export default {
 					mtime: data.root.mtime,
 					type: data.root.type,
 					fileCount: data.root.fileCount ?? null,
+					kind: null,
 					depth: 0,
 					parentSize: null,
 					// Never collapsible — it's the scope root, always visible,
@@ -219,6 +220,9 @@ export default {
 				mtime: item.mtime,
 				type: item.type,
 				fileCount: item.fileCount ?? null,
+				// Only set on a top-level row of the whole-instance scope
+				// ('user' | 'teamfolder' | 'external') — null everywhere else.
+				kind: item.kind ?? null,
 				depth,
 				parentSize,
 				hasArrow: item.type === 'folder' && item.size > 0,
@@ -231,6 +235,21 @@ export default {
 				return 100
 			}
 			return (Math.max(0, node.size) / node.parentSize) * 100
+		},
+		// node.kind is only set on a top-level row of the whole-instance
+		// scope — everywhere else (a normal folder, any depth under any
+		// scope) it's null and falls through to the plain folder/file icons.
+		iconFor(node) {
+			if (node.kind === 'user') {
+				return '👤'
+			}
+			if (node.kind === 'teamfolder') {
+				return '👥'
+			}
+			if (node.kind === 'external') {
+				return '🔗'
+			}
+			return node.type === 'folder' ? '📁' : '📄'
 		},
 		// Clicking any real row (not the synthetic "more items" row, which
 		// has no navPath) both highlights it here and tells the map to
