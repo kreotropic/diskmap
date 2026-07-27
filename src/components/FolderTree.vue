@@ -24,7 +24,7 @@
 				<div
 					v-for="(node, index) in flatTree"
 					:key="node.navPath ?? `other-${index}`"
-					ref="rowRefs"
+					:ref="(el) => setRowRef(node, el)"
 					class="dm-tree__row"
 					:class="{ 'dm-tree__row--selected': node.navPath !== null && node.navPath === selectedNavPath }"
 					@click="selectNode(node)">
@@ -96,6 +96,16 @@ export default {
 			loadingRoot: true,
 			error: false,
 			selectedNavPath: null,
+			// Row DOM elements keyed by navPath, populated by setRowRef() below —
+			// deliberately NOT Vue's array-form v-for ref (ref="rowRefs"): that
+			// array is only guaranteed to follow *mount* order, not the source
+			// array's order, so once rows get inserted mid-array (any expand()
+			// past the first one) its indices silently stop lining up with
+			// flatTree's own indices. Confirmed live: revealPath() scrolling to
+			// flatTree[idx] via the array ref reliably picked the wrong element
+			// (or one far off-screen) once more than one branch was expanded —
+			// a keyed lookup has no ordering to get wrong.
+			rowRefs: {},
 			// Bumped on every revealPath() call so an in-flight, now-superseded
 			// call can tell it's stale (see revealPath() itself) — clicking
 			// several map tiles in quick succession starts several overlapping
@@ -310,6 +320,19 @@ export default {
 			this.selectedNavPath = node.navPath
 			this.$emit('select-path', { path: node.navPath, type: node.type })
 		},
+		// Vue calls this with the real element on mount/update and with null
+		// on unmount — see the rowRefs data() comment for why this replaces
+		// the array-form v-for ref.
+		setRowRef(node, el) {
+			if (node.navPath === null) {
+				return
+			}
+			if (el) {
+				this.rowRefs[node.navPath] = el
+			} else {
+				delete this.rowRefs[node.navPath]
+			}
+		},
 		// Called by the parent view (via $refs) when a file is clicked in
 		// Treemap.vue — WinDirStat's actual map↔tree sync, not an external
 		// Files-app link. Expands every ancestor folder along targetPath
@@ -346,8 +369,7 @@ export default {
 			if (token !== this.revealToken) {
 				return
 			}
-			const idx = this.flatTree.findIndex((n) => n.navPath === targetPath)
-			const el = Array.isArray(this.$refs.rowRefs) ? this.$refs.rowRefs[idx] : null
+			const el = this.rowRefs[targetPath]
 			if (el) {
 				el.scrollIntoView({ block: 'center', behavior: 'smooth' })
 			}
