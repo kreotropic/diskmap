@@ -96,6 +96,14 @@ export default {
 			loadingRoot: true,
 			error: false,
 			selectedNavPath: null,
+			// Bumped on every revealPath() call so an in-flight, now-superseded
+			// call can tell it's stale (see revealPath() itself) — clicking
+			// several map tiles in quick succession starts several overlapping
+			// async revealPath() runs, and without this guard whichever one's
+			// network requests happen to resolve LAST wins, not whichever was
+			// clicked last (confirmed live: rapid clicks landed on an earlier
+			// click's file, not the most recent one).
+			revealToken: 0,
 		}
 	},
 	watch: {
@@ -308,6 +316,7 @@ export default {
 		// (fetching only the levels not already expanded) and scrolls to /
 		// highlights the leaf once it's visible.
 		async revealPath(targetPath) {
+			const token = ++this.revealToken
 			if (!targetPath || !this.flatTree.length) {
 				return
 			}
@@ -324,11 +333,19 @@ export default {
 				}
 				if (!node.expanded) {
 					await this.expand(node)
+					// A newer revealPath() call started while we were awaiting
+					// this expand() — it owns the selection/scroll now, not us.
+					if (token !== this.revealToken) {
+						return
+					}
 				}
 			}
 
 			this.selectedNavPath = targetPath
 			await this.$nextTick()
+			if (token !== this.revealToken) {
+				return
+			}
 			const idx = this.flatTree.findIndex((n) => n.navPath === targetPath)
 			const el = Array.isArray(this.$refs.rowRefs) ? this.$refs.rowRefs[idx] : null
 			if (el) {
