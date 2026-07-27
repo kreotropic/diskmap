@@ -55,3 +55,13 @@ export async function fetchMap(scope, identifier, params = {}) {
 	})
 	return data
 }
+
+/**
+ * Fetch the whole-instance header total: files+trash+versions across every
+ * user and team folder, plus the files-only figure the tree/map below
+ * actually browse (see UsageController::instanceOverview()).
+ */
+export async function fetchInstanceOverview() {
+	const { data } = await axios.get(base('/api/v1/instance/overview'))
+	return data
+}

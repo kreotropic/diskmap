@@ -43,6 +43,98 @@ class InstanceIndex {
     }
 
     /**
+     * The instance-wide header total (plan Phase 3d follow-up): listAll()'s
+     * entries only sum each user/team-folder's *files* — trash and versions
+     * live at different top-level paths within the same storage and were
+     * never part of that sum, so a user whose trash dwarfs their files (a
+     * very on-mission thing for this app to surface!) looked, confusingly,
+     * absent from the whole-server total. 'used' here matches the same
+     * files+trash+versions convention UserStorageService::overview() /
+     * TeamFolderService::listAll() already use for the per-user and
+     * per-team-folder headers — 'filesOnly' is what the tree/map below
+     * actually browse (they never descend into trash/versions), so the two
+     * figures together explain any gap instead of just presenting one
+     * number that mismatches every other view.
+     *
+     * @return array{used: int, filesOnly: int}
+     */
+    public function totals(): array {
+        $filesOnly = array_sum(array_map(static fn (InstanceTopLevelEntry $e) => max(0, $e->size), $this->listAll()));
+        $used = $filesOnly + $this->sumUserTrashAndVersions() + $this->sumTeamFolderTrashAndVersions();
+        return ['used' => $used, 'filesOnly' => $filesOnly];
+    }
+
+    /**
+     * One query for every user's trash + versions combined (same "one bulk
+     * join, not a loop per uid" shape as listUsers()) — files_trashbin and
+     * files_versions are just two more top-level paths in the same home
+     * storage as "files", not separate storages.
+     */
+    private function sumUserTrashAndVersions(): int {
+        $qb = $this->db->getQueryBuilder();
+        $qb->select('f.size')
+            ->from('storages', 's')
+            ->innerJoin('s', 'filecache', 'f', $qb->expr()->eq('f.storage', 's.numeric_id'))
+            ->where($qb->expr()->orX(
+                $qb->expr()->like('s.id', $qb->createNamedParameter('home::%')),
+                $qb->expr()->like('s.id', $qb->createNamedParameter('object::user:%')),
+            ))
+            ->andWhere($qb->expr()->in(
+                'f.path',
+                $qb->createNamedParameter(['files_trashbin', 'files_versions'], IQueryBuilder::PARAM_STR_ARRAY),
+            ));
+
+        $result = $qb->executeQuery();
+        $sum = 0;
+        while ($row = $result->fetchAssociative()) {
+            $sum += max(0, (int)$row['size']);
+        }
+        $result->closeCursor();
+
+        return $sum;
+    }
+
+    /**
+     * One query per team folder (LayoutDetector already resolves its trash/
+     * versions storage+path per folder — same per-folder cost
+     * listTeamFolders() and TeamFolderService::listAll() already pay).
+     */
+    private function sumTeamFolderTrashAndVersions(): int {
+        $qb = $this->db->getQueryBuilder();
+        $qb->select('folder_id')->from('group_folders');
+        $result = $qb->executeQuery();
+        $folderIds = array_map(static fn (array $row) => (int)$row['folder_id'], $result->fetchAllAssociative());
+        $result->closeCursor();
+
+        $sum = 0;
+        foreach ($folderIds as $folderId) {
+            $layout = $this->layoutDetector->resolve($folderId);
+            $sum += $this->sizeAtExactPath($layout->trashStorageId, $layout->trashPath);
+            $sum += $this->sizeAtExactPath($layout->versionsStorageId, $layout->versionsPath);
+        }
+
+        return $sum;
+    }
+
+    private function sizeAtExactPath(?int $storageId, string $path): int {
+        if ($storageId === null) {
+            return 0;
+        }
+        $qb = $this->db->getQueryBuilder();
+        $qb->select('size')
+            ->from('filecache')
+            ->where($qb->expr()->eq('storage', $qb->createNamedParameter($storageId, IQueryBuilder::PARAM_INT)))
+            ->andWhere($qb->expr()->eq('path', $qb->createNamedParameter($path)))
+            ->setMaxResults(1);
+
+        $result = $qb->executeQuery();
+        $row = $result->fetchAssociative();
+        $result->closeCursor();
+
+        return $row ? max(0, (int)$row['size']) : 0;
+    }
+
+    /**
      * One query for every user's home, regardless of how many accounts
      * exist — a storages↔filecache join on the "files" row, rather than
      * looping IUserManager and resolving each uid individually. Matches

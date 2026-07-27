@@ -11,6 +11,7 @@ namespace OCA\DiskMap\Controller;
 
 use OCA\DiskMap\AppInfo\Application;
 use OCA\DiskMap\Service\UserStorageService;
+use OCA\DiskMap\Usage\InstanceIndex;
 use OCA\DiskMap\Usage\IUsageSource;
 use OCA\DiskMap\Usage\Scope;
 use OCP\AppFramework\Controller;
@@ -43,6 +44,7 @@ class UsageController extends Controller {
         private IUserSession $userSession,
         private IGroupManager $groupManager,
         private UserStorageService $userStorageService,
+        private InstanceIndex $instanceIndex,
     ) {
         parent::__construct(Application::APP_ID, $request);
     }
@@ -129,6 +131,32 @@ class UsageController extends Controller {
             'path' => $scopeObj->path,
             'root' => $result['root'],
             'lastUpdated' => $this->usageSource->lastUpdated($scopeObj),
+        ]);
+    }
+
+    /**
+     * The whole-instance header total (plan Phase 3d follow-up) — files +
+     * trash + versions across every user and team folder, matching the
+     * "used" convention myOverview()/adminApi#teamFolders already use, plus
+     * the files-only figure the tree/map below actually browse. Deliberately
+     * NOT part of map()'s own response: mapTree()'s root.size is a real
+     * structural total (the sum its rendered tiles must add up to), while
+     * this is a header-only aggregate that intentionally includes space the
+     * map never draws a tile for.
+     */
+    #[NoAdminRequired]
+    public function instanceOverview(): JSONResponse {
+        $denied = $this->enforceScopeAccess(Scope::forInstance());
+        if ($denied !== null) {
+            return $denied;
+        }
+
+        $totals = $this->instanceIndex->totals();
+
+        return new JSONResponse([
+            'used' => $totals['used'],
+            'filesSize' => $totals['filesOnly'],
+            'lastUpdated' => $this->usageSource->lastUpdated(Scope::forInstance()),
         ]);
     }
 

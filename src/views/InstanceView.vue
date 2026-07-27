@@ -14,6 +14,8 @@
 				<h2>{{ t('diskmap', 'Whole server') }}</h2>
 				<span class="instance-view__sep">·</span>
 				<span><strong>{{ formatBytes(usedSize) }}</strong> {{ t('diskmap', 'used') }}</span>
+				<span class="instance-view__sep">·</span>
+				<span><strong>{{ formatBytes(filesSize) }}</strong> {{ t('diskmap', 'files') }}</span>
 				<button
 					type="button"
 					class="instance-view__info"
@@ -50,22 +52,23 @@ import { translate as t } from '@nextcloud/l10n'
 
 import FolderTree from '../components/FolderTree.vue'
 import Treemap from '../components/Treemap.vue'
-import { fetchMap } from '../services/api.js'
+import { fetchInstanceOverview } from '../services/api.js'
 import { formatBytes, formatDate } from '../utils/format.js'
 import { loadPaneSizes, savePaneSizes } from '../utils/panelSplit.js'
-
-// Cheap enough to size the header without paying for a full-budget
-// expansion — instanceMapTree() always populates every top-level entry
-// (user/team folder) regardless of maxNodes, so root.size is accurate even
-// at a small budget; only how deep it recurses past the top level shrinks.
-const HEADER_MAX_NODES = 30
 
 export default {
 	name: 'InstanceView',
 	components: { NcLoadingIcon, NcNoteCard, Treemap, FolderTree, Splitpanes, Pane },
 	data() {
 		return {
+			// 'used' is files+trash+versions across everyone (matches the same
+			// convention "A minha storage"/team-folder headers use); 'filesSize'
+			// is what the tree/map below actually browse (they never descend
+			// into trash/versions) — showing both avoids the "why doesn't the
+			// total match my own storage's 'used'?" confusion a files-only
+			// figure caused here before.
 			usedSize: 0,
+			filesSize: 0,
 			lastUpdated: null,
 			loading: true,
 			loadError: false,
@@ -79,8 +82,9 @@ export default {
 	},
 	async mounted() {
 		try {
-			const data = await fetchMap('instance', '', { maxNodes: HEADER_MAX_NODES })
-			this.usedSize = data.root?.size ?? 0
+			const data = await fetchInstanceOverview()
+			this.usedSize = data.used
+			this.filesSize = data.filesSize
 			this.lastUpdated = data.lastUpdated
 		} catch (e) {
 			this.loadError = true
