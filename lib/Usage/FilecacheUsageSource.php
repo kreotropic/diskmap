@@ -96,6 +96,7 @@ class FilecacheUsageSource implements IUsageSource {
         $items = array_map(function (array $row) use ($storageId, $folderMimetypeId) {
             $isFolder = (int)$row['mimetype'] === $folderMimetypeId;
             $size = (int)$row['size'];
+            $composition = $isFolder ? $this->recursiveComposition($storageId, (string)$row['path'], $size) : null;
             return new UsageNode(
                 name: (string)$row['name'],
                 path: (string)$row['path'],
@@ -103,10 +104,12 @@ class FilecacheUsageSource implements IUsageSource {
                 type: $isFolder ? 'folder' : 'file',
                 mimetype: !$isFolder && $row['mimetype_name'] !== null ? (string)$row['mimetype_name'] : null,
                 mtime: (int)$row['mtime'],
-                fileCount: $isFolder ? $this->recursiveFileCount($storageId, (string)$row['path'], $size) : null,
+                fileCount: $composition['count'] ?? null,
+                composition: $composition['composition'] ?? null,
             );
         }, $rows);
 
+        $rootComposition = $this->recursiveComposition($storageId, $path, $rootRow['size']);
         return [
             'root' => new UsageNode(
                 name: $rootRow['name'],
@@ -115,7 +118,8 @@ class FilecacheUsageSource implements IUsageSource {
                 type: 'folder', // every rootPath() resolution is a directory
                 mimetype: null,
                 mtime: $rootRow['mtime'],
-                fileCount: $this->recursiveFileCount($storageId, $path, $rootRow['size']),
+                fileCount: $rootComposition['count'],
+                composition: $rootComposition['composition'],
             ),
             'items' => $items,
             'truncated' => $truncated,
@@ -411,22 +415,34 @@ class FilecacheUsageSource implements IUsageSource {
     }
 
     /**
-     * Recursive descendant file count for one folder (plan Phase 3b — a
-     * real, non-free query, accepted as a performance risk not yet
-     * validated at production scale; see plan). Deliberately one query per
-     * folder with a literal path, NOT a correlated subquery: EXPLAIN
-     * confirmed live that a correlated `path LIKE CONCAT(outer.path, '/%')`
-     * cannot get the fs_storage_path_prefix range scan (the bound isn't a
-     * compile-time constant), while the exact same pattern with a literal
-     * path does (`type: range`, confirmed at key_len 267 — the full
-     * (storage, path) prefix). USE INDEX pins that choice so the optimizer
-     * can't silently fall back to scanning every row for the storage.
+     * Recursive descendant file count AND per-mimetype size breakdown for
+     * one folder, in a single query (plan Phase 3b + the "Composição"
+     * stacked bar follow-up) — a real, non-free query, accepted as a
+     * performance risk not yet validated at production scale; see plan.
+     * Used to be two separate queries (a plain COUNT(*), then a second one
+     * added for composition) until it became clear a GROUP BY gives both at
+     * once for the same cost as the original COUNT(*) alone.
+     *
+     * Deliberately one query per folder with a literal path, NOT a
+     * correlated subquery: EXPLAIN confirmed live that a correlated `path
+     * LIKE CONCAT(outer.path, '/%')` cannot get the fs_storage_path_prefix
+     * range scan (the bound isn't a compile-time constant), while the exact
+     * same pattern with a literal path does (`type: range`, confirmed at
+     * key_len 267 — the full (storage, path) prefix). USE INDEX pins that
+     * choice so the optimizer can't silently fall back to scanning every row
+     * for the storage.
+     *
+     * @return array{count: int, composition: array<string, int>} composition
+     *     maps mimetype string ("image/png") to summed size — categorizing
+     *     that into the 5 UI buckets (document/image/video/archive/other) is
+     *     the frontend's job (utils/mimetypeCategory.js), so this backend
+     *     code has no category logic of its own to keep in sync with it.
      */
-    private function recursiveFileCount(int $storageId, string $path, int $size): int {
+    private function recursiveComposition(int $storageId, string $path, int $size): array {
         // A folder's own aggregate size already tells us whether it has any
         // descendants at all — skip the query for an empty folder.
         if ($size <= 0) {
-            return 0;
+            return ['count' => 0, 'composition' => []];
         }
 
         // path='' only happens for an external storage's own root (plan
@@ -435,17 +451,26 @@ class FilecacheUsageSource implements IUsageSource {
         // "files"). Its children's paths have no leading slash to match, so
         // the pattern must be a bare '%' there instead of '<path>/%'.
         $likePattern = $path !== '' ? $this->db->escapeLikeParameter($path) . '/%' : '%';
+        $folderMimetypeId = $this->folderMimetypeId();
 
-        $sql = 'SELECT COUNT(*) AS c FROM `*PREFIX*filecache` USE INDEX (fs_storage_path_prefix)
-                WHERE storage = ? AND path LIKE ?';
-        $result = $this->db->executeQuery($sql, [
-            $storageId,
-            $likePattern,
-        ]);
-        $row = $result->fetchAssociative();
+        $sql = 'SELECT m.mimetype AS mimetype, COUNT(*) AS c, SUM(f.size) AS total
+                FROM `*PREFIX*filecache` f USE INDEX (fs_storage_path_prefix)
+                LEFT JOIN `*PREFIX*mimetypes` m ON f.mimetype = m.id
+                WHERE f.storage = ? AND f.path LIKE ? AND f.mimetype != ?
+                GROUP BY m.mimetype';
+        $result = $this->db->executeQuery($sql, [$storageId, $likePattern, $folderMimetypeId]);
+
+        $count = 0;
+        $composition = [];
+        while ($row = $result->fetchAssociative()) {
+            $count += (int)$row['c'];
+            if ($row['mimetype'] !== null) {
+                $composition[(string)$row['mimetype']] = (int)$row['total'];
+            }
+        }
         $result->closeCursor();
 
-        return $row ? (int)$row['c'] : 0;
+        return ['count' => $count, 'composition' => $composition];
     }
 
     /**
@@ -543,19 +568,31 @@ class FilecacheUsageSource implements IUsageSource {
             $truncated = count($entries) > $limit;
             $shown = $truncated ? array_slice($entries, 0, $limit) : $entries;
 
-            $items = array_map(fn (InstanceTopLevelEntry $e) => new UsageNode(
-                name: $e->name,
-                path: $e->name,
-                size: $e->size,
-                type: 'folder',
-                mimetype: null,
-                mtime: $e->mtime,
-                fileCount: $this->recursiveFileCount($e->storageId, $e->path, $e->size),
-                kind: $e->kind,
-            ), $shown);
+            $rootComposition = [];
+            $items = array_map(function (InstanceTopLevelEntry $e) use (&$rootComposition) {
+                $composition = $this->recursiveComposition($e->storageId, $e->path, $e->size);
+                foreach ($composition['composition'] as $mimetype => $size) {
+                    $rootComposition[$mimetype] = ($rootComposition[$mimetype] ?? 0) + $size;
+                }
+                return new UsageNode(
+                    name: $e->name,
+                    path: $e->name,
+                    size: $e->size,
+                    type: 'folder',
+                    mimetype: null,
+                    mtime: $e->mtime,
+                    fileCount: $composition['count'],
+                    composition: $composition['composition'],
+                    kind: $e->kind,
+                );
+            }, $shown);
 
             return [
-                'root' => new UsageNode(name: '', path: '', size: $totalSize, type: 'folder'),
+                // Composition here only reflects $shown (a truncated top-level
+                // list skips whatever's beyond $limit, same honesty tradeoff
+                // fileCount/size already accept elsewhere in this file) — good
+                // enough for a "what's using space" bar, not claimed as exact.
+                'root' => new UsageNode(name: '', path: '', size: $totalSize, type: 'folder', composition: $rootComposition),
                 'items' => $items,
                 'truncated' => $truncated,
             ];

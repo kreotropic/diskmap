@@ -55,18 +55,6 @@
 				<strong>{{ formatBytes(tooltip.node.data.size) }}</strong>
 				<span>{{ rowLabel(tooltip.node) }}</span>
 			</div>
-
-			<div class="dm-treemap__legend">
-				<button
-					v-for="entry in legendEntries"
-					:key="entry.key"
-					class="dm-treemap__legend-item"
-					:class="{ 'dm-treemap__legend-item--dimmed': activeCategory && activeCategory !== entry.key }"
-					@click="toggleCategory(entry.key)">
-					<span class="dm-treemap__legend-swatch" :style="{ background: entry.color }" />
-					{{ entry.label }}
-				</button>
-			</div>
 		</template>
 	</div>
 </template>
@@ -80,7 +68,7 @@ import { translate as t } from '@nextcloud/l10n'
 
 import { fetchMap } from '../services/api.js'
 import { formatBytes } from '../utils/format.js'
-import { categoryForMimetype, CATEGORY_DOCUMENT, CATEGORY_IMAGE, CATEGORY_VIDEO, CATEGORY_ARCHIVE, CATEGORY_OTHER } from '../utils/mimetypeCategory.js'
+import { categoryForMimetype, CATEGORY_OTHER } from '../utils/mimetypeCategory.js'
 
 const CANVAS_WIDTH = 960
 const CANVAS_HEIGHT = 380
@@ -97,6 +85,10 @@ export default {
 		// link for scope="teamfolder" (its files live under /<folderName>/…
 		// in the Files app, not under the internal filecache path).
 		folderName: { type: String, default: '' },
+		// Owned by the parent view (which also renders <CategoryLegend> in its
+		// header) rather than by Treemap itself — both need to read/write the
+		// same value, and they're siblings in the DOM, not parent/child.
+		activeCategory: { type: String, default: null },
 	},
 	data() {
 		return {
@@ -106,7 +98,6 @@ export default {
 			loading: true,
 			error: false,
 			tooltip: null,
-			activeCategory: null,
 			hoveredKey: null,
 			selectedKey: null,
 			// Set by focusPath() when a folder is clicked in FolderTree.vue —
@@ -135,15 +126,6 @@ export default {
 			treemap().tile(treemapSquarify).size([this.canvasWidth, this.canvasHeight]).paddingInner(2).paddingOuter(1).round(true)(hierarchyRoot)
 			return hierarchyRoot.leaves()
 		},
-		legendEntries() {
-			return [
-				{ key: CATEGORY_DOCUMENT, label: t('diskmap', 'Documents'), color: 'var(--dm-cat-document)' },
-				{ key: CATEGORY_IMAGE, label: t('diskmap', 'Images'), color: 'var(--dm-cat-image)' },
-				{ key: CATEGORY_VIDEO, label: t('diskmap', 'Video'), color: 'var(--dm-cat-video)' },
-				{ key: CATEGORY_ARCHIVE, label: t('diskmap', 'Archives & installers'), color: 'var(--dm-cat-archive)' },
-				{ key: CATEGORY_OTHER, label: t('diskmap', 'Other'), color: 'var(--dm-cat-other)' },
-			]
-		},
 	},
 	watch: {
 		scope() {
@@ -165,7 +147,6 @@ export default {
 		async load() {
 			this.loading = true
 			this.error = false
-			this.activeCategory = null
 			this.selectedKey = null
 			this.highlightedFolderPath = null
 			try {
@@ -287,9 +268,6 @@ export default {
 				this.highlightedFolderPath = path
 			}
 		},
-		toggleCategory(key) {
-			this.activeCategory = this.activeCategory === key ? null : key
-		},
 		labelFits(node) {
 			return (node.x1 - node.x0) > 40 && (node.y1 - node.y0) > 18
 		},
@@ -335,47 +313,15 @@ export default {
 
 <style scoped>
 .dm-treemap {
-	/* Harmonized categorical palette (equal-ish lightness/chroma, hue-only
-	   distinction) — validated with the dataviz skill's validate_palette.js
-	   (OKLCH + CVD simulation, --pairs all since treemap tiles can be any two
-	   neighbors). Document/blue is the fixed anchor (closest to NC's own
-	   blue); image/video/archive were re-stepped in chroma just enough to
-	   clear the colorblind-separation floor while keeping the requested
-	   hues. CVD separation lands in the 6-8 "warn" band, which the method
-	   allows given the secondary encoding this map already ships: direct
-	   text labels on tiles big enough, plus the translucent tile border
-	   below. "Other" gray was kept light/discreet as requested (Outros
-	   should recede, not compete) — its separation from the green (image)
-	   hue is a little tighter than ideal, mitigated the same way. */
-	--dm-cat-document: #3e6fa8;
-	--dm-cat-image: #3e925c;
-	--dm-cat-video: #9c4976;
-	--dm-cat-archive: #b77722;
-	--dm-cat-other: #8a8f94;
+	/* --dm-cat-* category colors now live in css/main.css, on the shared
+	   .app-diskmap ancestor — FolderTree.vue's composition bar needs the
+	   same values and it's a sibling, not a child, of this component. */
 	position: relative;
 	height: 100%;
 	box-sizing: border-box;
 	display: flex;
 	flex-direction: column;
 	min-height: 0;
-}
-
-@media (prefers-color-scheme: dark) {
-	body:not([data-theme-light]) .dm-treemap {
-		--dm-cat-document: #2f82dc;
-		--dm-cat-image: #06793f;
-		--dm-cat-video: #b64886;
-		--dm-cat-archive: #c58431;
-		--dm-cat-other: #7d848b;
-	}
-}
-
-body[data-theme-dark] .dm-treemap {
-	--dm-cat-document: #2f82dc;
-	--dm-cat-image: #06793f;
-	--dm-cat-video: #b64886;
-	--dm-cat-archive: #c58431;
-	--dm-cat-other: #7d848b;
 }
 
 .dm-treemap__error {
@@ -459,36 +405,4 @@ body[data-theme-dark] .dm-treemap {
 	white-space: nowrap;
 }
 
-.dm-treemap__legend {
-	display: flex;
-	flex-wrap: wrap;
-	gap: 6px;
-	margin-top: 4px;
-	flex-shrink: 0;
-}
-
-.dm-treemap__legend-item {
-	display: flex;
-	align-items: center;
-	gap: 4px;
-	background: none;
-	border: none;
-	cursor: pointer;
-	padding: 1px 3px;
-	color: var(--color-main-text);
-	font-size: 0.78em;
-	opacity: 1;
-	transition: opacity 0.15s;
-}
-
-.dm-treemap__legend-item--dimmed {
-	opacity: 0.4;
-}
-
-.dm-treemap__legend-swatch {
-	width: 9px;
-	height: 9px;
-	border-radius: 2px;
-	display: inline-block;
-}
 </style>

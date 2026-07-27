@@ -26,6 +26,10 @@
 				<span class="teamfolder-detail__sep">·</span>
 				<span>{{ t('diskmap', 'Groups') }}: <strong>{{ groupNames }}</strong></span>
 			</template>
+			<CategoryLegend
+				class="teamfolder-detail__legend"
+				:active-category="activeCategory"
+				@toggle="onToggleCategory" />
 			<button
 				type="button"
 				class="teamfolder-detail__info"
@@ -54,6 +58,7 @@
 						scope="teamfolder"
 						:identifier="folder.id"
 						:folder-name="folder.name"
+						:active-category="activeCategory"
 						@reveal-path="onRevealPath" />
 				</Pane>
 			</Splitpanes>
@@ -67,18 +72,22 @@ import { translate as t } from '@nextcloud/l10n'
 
 import FolderTree from '../components/FolderTree.vue'
 import Treemap from '../components/Treemap.vue'
+import CategoryLegend from '../components/CategoryLegend.vue'
 import { formatBytes, formatDate } from '../utils/format.js'
 import { loadPaneSizes, savePaneSizes } from '../utils/panelSplit.js'
 
 export default {
 	name: 'TeamFolderDetail',
-	components: { Treemap, FolderTree, Splitpanes, Pane },
+	components: { Treemap, FolderTree, CategoryLegend, Splitpanes, Pane },
 	props: {
 		folder: { type: Object, required: true },
 	},
 	data() {
 		return {
 			paneSizes: loadPaneSizes(),
+			// Owned here (not in Treemap) so the header's <CategoryLegend> and
+			// the map below can read/write the same value — they're siblings.
+			activeCategory: null,
 		}
 	},
 	computed: {
@@ -89,6 +98,11 @@ export default {
 			return this.folder.groups.map((group) => group.id).join(', ')
 		},
 	},
+	watch: {
+		'folder.id'() {
+			this.activeCategory = null
+		},
+	},
 	methods: {
 		t,
 		formatBytes,
@@ -97,6 +111,9 @@ export default {
 		},
 		onSelectPath(payload) {
 			this.$refs.treemap?.focusPath(payload)
+		},
+		onToggleCategory(key) {
+			this.activeCategory = this.activeCategory === key ? null : key
 		},
 		onPanesResized(event) {
 			const sizes = event.panes.map((pane) => pane.size)
@@ -143,8 +160,11 @@ export default {
 	color: var(--color-text-maxcontrast);
 }
 
-.teamfolder-detail__info {
+.teamfolder-detail__legend {
 	margin-inline-start: auto;
+}
+
+.teamfolder-detail__info {
 	background: none;
 	border: none;
 	cursor: help;

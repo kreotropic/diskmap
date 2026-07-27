@@ -5,4 +5,36 @@
 
 .app-diskmap {
 	height: 100%;
+	/* Categorical mimetype-group palette — shared by Treemap.vue (map tile
+	   fill) and FolderTree.vue (the "Composição" stacked bar), so both need
+	   it available regardless of which one they're nested under; defined
+	   here at the whole-app root (NcContent's own class) rather than scoped
+	   inside either component, since they're siblings, not parent/child —
+	   a CSS custom property only cascades down, not sideways. Values given
+	   directly by the user (a design mockup, not run through the dataviz
+	   skill's validator this time) — same values used for dark mode for now
+	   as a placeholder; revisit if flagged as low-contrast there. */
+	--dm-cat-document: #4c6ef5;
+	--dm-cat-image: #12b886;
+	--dm-cat-video: #be4bdb;
+	--dm-cat-archive: #f59f00;
+	--dm-cat-other: #868e96;
+}
+
+@media (prefers-color-scheme: dark) {
+	body:not([data-theme-light]) .app-diskmap {
+		--dm-cat-document: #4c6ef5;
+		--dm-cat-image: #12b886;
+		--dm-cat-video: #be4bdb;
+		--dm-cat-archive: #f59f00;
+		--dm-cat-other: #868e96;
+	}
+}
+
+body[data-theme-dark] .app-diskmap {
+	--dm-cat-document: #4c6ef5;
+	--dm-cat-image: #12b886;
+	--dm-cat-video: #be4bdb;
+	--dm-cat-archive: #f59f00;
+	--dm-cat-other: #868e96;
 }

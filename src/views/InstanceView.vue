@@ -16,6 +16,10 @@
 				<span><strong>{{ formatBytes(usedSize) }}</strong> {{ t('diskmap', 'used') }}</span>
 				<span class="instance-view__sep">·</span>
 				<span><strong>{{ formatBytes(filesSize) }}</strong> {{ t('diskmap', 'files') }}</span>
+				<CategoryLegend
+					class="instance-view__legend"
+					:active-category="activeCategory"
+					@toggle="onToggleCategory" />
 				<button
 					type="button"
 					class="instance-view__info"
@@ -36,7 +40,12 @@
 							@select-path="onSelectPath" />
 					</Pane>
 					<Pane :size="paneSizes[1]" :min-size="15">
-						<Treemap ref="treemap" scope="instance" identifier="" @reveal-path="onRevealPath" />
+						<Treemap
+							ref="treemap"
+							scope="instance"
+							identifier=""
+							:active-category="activeCategory"
+							@reveal-path="onRevealPath" />
 					</Pane>
 				</Splitpanes>
 			</div>
@@ -52,13 +61,14 @@ import { translate as t } from '@nextcloud/l10n'
 
 import FolderTree from '../components/FolderTree.vue'
 import Treemap from '../components/Treemap.vue'
+import CategoryLegend from '../components/CategoryLegend.vue'
 import { fetchInstanceOverview } from '../services/api.js'
 import { formatBytes, formatDate } from '../utils/format.js'
 import { loadPaneSizes, savePaneSizes } from '../utils/panelSplit.js'
 
 export default {
 	name: 'InstanceView',
-	components: { NcLoadingIcon, NcNoteCard, Treemap, FolderTree, Splitpanes, Pane },
+	components: { NcLoadingIcon, NcNoteCard, Treemap, FolderTree, CategoryLegend, Splitpanes, Pane },
 	data() {
 		return {
 			// 'used' is files+trash+versions across everyone (matches the same
@@ -73,6 +83,9 @@ export default {
 			loading: true,
 			loadError: false,
 			paneSizes: loadPaneSizes(),
+			// Owned here (not in Treemap) so the header's <CategoryLegend> and
+			// the map below can read/write the same value — they're siblings.
+			activeCategory: null,
 		}
 	},
 	computed: {
@@ -100,6 +113,9 @@ export default {
 		},
 		onSelectPath(payload) {
 			this.$refs.treemap?.focusPath(payload)
+		},
+		onToggleCategory(key) {
+			this.activeCategory = this.activeCategory === key ? null : key
 		},
 		onPanesResized(event) {
 			const sizes = event.panes.map((pane) => pane.size)
@@ -141,8 +157,11 @@ export default {
 	color: var(--color-text-maxcontrast);
 }
 
-.instance-view__info {
+.instance-view__legend {
 	margin-inline-start: auto;
+}
+
+.instance-view__info {
 	background: none;
 	border: none;
 	cursor: help;

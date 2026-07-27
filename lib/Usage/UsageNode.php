@@ -44,6 +44,14 @@ final class UsageNode implements \JsonSerializable {
         // tell the three apart at a glance. Null everywhere else, including
         // every deeper folder inside one of them (those are just folders).
         public readonly ?string $kind = null,
+        // Recursive per-mimetype size breakdown for a children() 'folder'
+        // node — e.g. ['image/png' => 4096, 'application/pdf' => 2048] —
+        // powers the tree pane's "Composição" stacked bar. Categorizing raw
+        // mimetypes into the 5 UI buckets is deliberately left to the
+        // frontend (utils/mimetypeCategory.js) so that mapping lives in one
+        // place. Null for files (their own $mimetype already says everything)
+        // and every node from mapTree().
+        public readonly ?array $composition = null,
     ) {
     }
 
@@ -59,6 +67,7 @@ final class UsageNode implements \JsonSerializable {
             'children' => $this->children,
             'countExact' => $this->countExact,
             'kind' => $this->kind,
+            'composition' => $this->composition,
         ];
     }
 }

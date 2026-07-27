@@ -14,7 +14,8 @@
 			<div class="dm-tree__rows">
 				<div class="dm-tree__header-row">
 					<span class="dm-tree__col-name" />
-					<span class="dm-tree__col-bar">{{ t('diskmap', '% of parent') }}</span>
+					<span class="dm-tree__col-composition">{{ t('diskmap', 'Composition') }}</span>
+					<span class="dm-tree__col-pct">{{ t('diskmap', '% of parent') }}</span>
 					<span class="dm-tree__col-size">{{ t('diskmap', 'Size') }}</span>
 					<span class="dm-tree__col-count">{{ t('diskmap', 'File count') }}</span>
 					<span class="dm-tree__col-mtime">{{ t('diskmap', 'Last modified') }}</span>
@@ -40,12 +41,16 @@
 						<span class="dm-tree__icon">{{ iconFor(node) }}</span>
 						<span class="dm-tree__name">{{ node.name }}</span>
 					</span>
-					<span class="dm-tree__col-bar">
-						<span class="dm-tree__bar-track">
-							<span class="dm-tree__bar-fill" :style="{ width: pct(node) + '%' }" />
+					<span class="dm-tree__col-composition">
+						<span class="dm-tree__comp-track">
+							<span
+								v-for="seg in compositionSegments(node)"
+								:key="seg.category"
+								class="dm-tree__comp-seg"
+								:style="{ width: seg.pct + '%', background: seg.color }" />
 						</span>
-						<span class="dm-tree__pct">{{ pct(node).toFixed(1) }}%</span>
 					</span>
+					<span class="dm-tree__col-pct">{{ pct(node).toFixed(1) }}%</span>
 					<span class="dm-tree__col-size">{{ formatBytes(node.size) }}</span>
 					<span class="dm-tree__col-count">{{ formatCount(node.fileCount) }}</span>
 					<span class="dm-tree__col-mtime">{{ formatDate(node.mtime) }}</span>
@@ -63,6 +68,7 @@ import { translate as t } from '@nextcloud/l10n'
 
 import { fetchChildren } from '../services/api.js'
 import { formatBytes, formatDate, formatCount } from '../utils/format.js'
+import { categoryForMimetype, CATEGORY_OTHER } from '../utils/mimetypeCategory.js'
 
 const OTHERS_TYPE = 'other'
 // One level's worth of children per fetch — comfortably covers realistic
@@ -130,6 +136,7 @@ export default {
 					mtime: data.root.mtime,
 					type: data.root.type,
 					fileCount: data.root.fileCount ?? null,
+					composition: data.root.composition ?? null,
 					kind: null,
 					depth: 0,
 					parentSize: null,
@@ -219,7 +226,11 @@ export default {
 				size: item.size,
 				mtime: item.mtime,
 				type: item.type,
+				// Only ever set for a 'file' item — used to color its
+				// composition-bar segment via categoryForMimetype().
+				mimetype: item.mimetype ?? null,
 				fileCount: item.fileCount ?? null,
+				composition: item.composition ?? null,
 				// Only set on a top-level row of the whole-instance scope
 				// ('user' | 'teamfolder' | 'external') — null everywhere else.
 				kind: item.kind ?? null,
@@ -235,6 +246,34 @@ export default {
 				return 100
 			}
 			return (Math.max(0, node.size) / node.parentSize) * 100
+		},
+		// The "Composição" stacked bar: for a folder, node.composition (a
+		// backend-computed {mimetype: size} map recursive over every
+		// descendant file) gets bucketed into the 5 UI categories and turned
+		// into segment widths. A file has no composition of its own from the
+		// backend (its single node.mimetype already says everything) — it
+		// reads as one 100%-width segment in its own category. The synthetic
+		// "more items not shown" row's true mix is unknown, so it reads as
+		// 100% "Other" rather than guessing.
+		compositionSegments(node) {
+			if (node.type === OTHERS_TYPE) {
+				return [{ category: CATEGORY_OTHER, pct: 100, color: 'var(--dm-cat-other)' }]
+			}
+			if (node.type === 'file') {
+				const category = categoryForMimetype(node.mimetype)
+				return [{ category, pct: 100, color: `var(--dm-cat-${category})` }]
+			}
+			if (!node.composition || node.size <= 0) {
+				return []
+			}
+			const byCategory = {}
+			for (const [mimetype, size] of Object.entries(node.composition)) {
+				const category = categoryForMimetype(mimetype)
+				byCategory[category] = (byCategory[category] ?? 0) + Math.max(0, size)
+			}
+			return Object.entries(byCategory)
+				.map(([category, size]) => ({ category, pct: (size / node.size) * 100, color: `var(--dm-cat-${category})` }))
+				.sort((a, b) => b.pct - a.pct)
 		},
 		// node.kind is only set on a top-level row of the whole-instance
 		// scope — everywhere else (a normal folder, any depth under any
@@ -312,7 +351,7 @@ export default {
 .dm-tree__header-row,
 .dm-tree__row {
 	display: grid;
-	grid-template-columns: minmax(220px, 1fr) 160px 90px 90px 160px;
+	grid-template-columns: minmax(220px, 1fr) 120px 55px 90px 90px 160px;
 	align-items: center;
 	gap: 6px;
 	font-size: 12.5px;
@@ -427,32 +466,29 @@ export default {
 	flex-shrink: 0;
 }
 
-.dm-tree__col-bar {
+.dm-tree__col-composition {
 	display: flex;
 	align-items: center;
-	gap: 6px;
 }
 
-.dm-tree__bar-track {
-	flex: 1;
-	height: 6px;
+.dm-tree__comp-track {
+	display: flex;
+	width: 100%;
+	height: 8px;
 	background: var(--color-background-darker);
 	border-radius: 3px;
 	overflow: hidden;
 }
 
-.dm-tree__bar-fill {
+.dm-tree__comp-seg {
 	display: block;
 	height: 100%;
-	background: var(--color-primary-element);
 }
 
-.dm-tree__pct {
+.dm-tree__col-pct {
 	color: var(--color-text-maxcontrast);
 	font-size: 0.85em;
-	width: 42px;
 	text-align: right;
-	flex-shrink: 0;
 }
 
 .dm-tree__col-size,

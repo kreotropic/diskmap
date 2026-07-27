@@ -28,6 +28,7 @@ OC.L10N.register(
     "Archives & installers" : "Arquivos e instaladores",
     "Other" : "Outros",
     "Other small files ({count})" : "Outros ficheiros pequenos ({count})",
+    "Composition" : "Composição",
     "% of parent" : "% do pai",
     "File count" : "N.º de ficheiros",
     "Last modified" : "Última alteração",
