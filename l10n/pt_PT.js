@@ -35,6 +35,7 @@ OC.L10N.register(
     "More items not shown" : "Mais itens não mostrados",
     "Expand" : "Expandir",
     "Collapse" : "Colapsar",
+    "Opening…" : "A abrir…",
     "Could not load the folder tree." : "Não foi possível carregar a árvore de pastas.",
     "No items found." : "Nenhum item encontrado."
 },

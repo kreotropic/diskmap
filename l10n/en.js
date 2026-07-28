@@ -35,6 +35,7 @@ OC.L10N.register(
     "More items not shown" : "More items not shown",
     "Expand" : "Expand",
     "Collapse" : "Collapse",
+    "Opening…" : "Opening…",
     "Could not load the folder tree." : "Could not load the folder tree.",
     "No items found." : "No items found."
 },

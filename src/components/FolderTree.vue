@@ -5,6 +5,17 @@
 <template>
 
 	<div class="dm-tree">
+		<!-- Follows revealPath() (map → tree sync), which on a deep/large
+		     scope like the whole-server view can chain several sequential
+		     network round trips (one expand() per ancestor level) — the
+		     per-row spinner alone isn't enough since whichever row is
+		     currently expanding may well be scrolled out of view while this
+		     runs, unlike a plain click-to-toggle where the row is already
+		     visible (the user just clicked it). -->
+		<div v-if="revealing" class="dm-tree__reveal-indicator">
+			<span class="dm-tree__reveal-spinner" />
+			{{ t('diskmap', 'Opening…') }}
+		</div>
 		<NcLoadingIcon v-if="loadingRoot" :size="32" />
 		<NcNoteCard v-else-if="error" type="error">
 			{{ t('diskmap', 'Could not load the folder tree.') }}
@@ -40,7 +51,11 @@
 						</button>
 						<span v-else class="dm-tree__arrow-placeholder" />
 						<span class="dm-tree__icon">{{ iconFor(node) }}</span>
-						<span class="dm-tree__name">{{ node.name }}</span>
+						<span class="dm-tree__name">{{ node.displayName ?? node.name }}</span>
+						<span
+							v-if="node.displayName && node.displayName !== node.name"
+							class="dm-tree__uid"
+							:title="node.name">{{ node.name }}</span>
 					</span>
 					<span class="dm-tree__col-composition">
 						<span class="dm-tree__comp-track">
@@ -115,6 +130,9 @@ export default {
 			// clicked last (confirmed live: rapid clicks landed on an earlier
 			// click's file, not the most recent one).
 			revealToken: 0,
+			// Drives the global "Opening…" indicator — see its template
+			// comment for why the per-row spinner alone isn't enough.
+			revealing: false,
 		}
 	},
 	watch: {
@@ -240,11 +258,15 @@ export default {
 		makeNode(item, depth, parentNavPath, parentSize) {
 			const navPath = parentNavPath === '' ? item.name : `${parentNavPath}/${item.name}`
 			return {
-				// item.displayName is only set on a top-level instance row (a
-				// user's home shows their display name instead of the raw
-				// uid on an LDAP/AD-backed instance) — navPath above still
-				// uses item.name, so navigation stays stable either way.
-				name: item.displayName ?? item.name,
+				name: item.name,
+				// Only set (and only differs from name) on a top-level user
+				// row on an LDAP/AD-backed instance, where name is the raw,
+				// opaque uid — shown alongside it (smaller, muted) rather
+				// than replacing it, so the uid stays available for anyone
+				// who needs to match it back to a directory record. navPath
+				// above always uses item.name, so navigation stays stable
+				// either way.
+				displayName: item.displayName ?? null,
 				navPath,
 				size: item.size,
 				mtime: item.mtime,
@@ -348,35 +370,45 @@ export default {
 			if (!targetPath || !this.flatTree.length) {
 				return
 			}
-			const segments = targetPath.split('/')
-			let currentPath = ''
-			for (let i = 0; i < segments.length - 1; i++) {
-				currentPath = currentPath === '' ? segments[i] : `${currentPath}/${segments[i]}`
-				const node = this.flatTree.find((n) => n.navPath === currentPath)
-				if (!node) {
-					// A segment isn't in the tree yet (e.g. a deeper level we
-					// haven't loaded because an ancestor wasn't a folder, or
-					// the path simply doesn't exist) — nothing more we can do.
-					return
-				}
-				if (!node.expanded) {
-					await this.expand(node)
-					// A newer revealPath() call started while we were awaiting
-					// this expand() — it owns the selection/scroll now, not us.
-					if (token !== this.revealToken) {
+			this.revealing = true
+			try {
+				const segments = targetPath.split('/')
+				let currentPath = ''
+				for (let i = 0; i < segments.length - 1; i++) {
+					currentPath = currentPath === '' ? segments[i] : `${currentPath}/${segments[i]}`
+					const node = this.flatTree.find((n) => n.navPath === currentPath)
+					if (!node) {
+						// A segment isn't in the tree yet (e.g. a deeper level we
+						// haven't loaded because an ancestor wasn't a folder, or
+						// the path simply doesn't exist) — nothing more we can do.
 						return
 					}
+					if (!node.expanded) {
+						await this.expand(node)
+						// A newer revealPath() call started while we were awaiting
+						// this expand() — it owns the selection/scroll now, not us.
+						if (token !== this.revealToken) {
+							return
+						}
+					}
 				}
-			}
 
-			this.selectedNavPath = targetPath
-			await this.$nextTick()
-			if (token !== this.revealToken) {
-				return
-			}
-			const el = this.rowRefs[targetPath]
-			if (el) {
-				el.scrollIntoView({ block: 'center', behavior: 'smooth' })
+				this.selectedNavPath = targetPath
+				await this.$nextTick()
+				if (token !== this.revealToken) {
+					return
+				}
+				const el = this.rowRefs[targetPath]
+				if (el) {
+					el.scrollIntoView({ block: 'center', behavior: 'smooth' })
+				}
+			} finally {
+				// Only the still-current call clears it — an older, superseded
+				// call reaching its own finally must not hide the indicator
+				// out from under whichever newer call is still running.
+				if (token === this.revealToken) {
+					this.revealing = false
+				}
 			}
 		},
 	},
@@ -385,11 +417,39 @@ export default {
 
 <style scoped>
 .dm-tree {
+	position: relative;
 	height: 100%;
 	box-sizing: border-box;
 	display: flex;
 	flex-direction: column;
 	min-height: 0;
+}
+
+.dm-tree__reveal-indicator {
+	position: absolute;
+	top: 8px;
+	right: 12px;
+	z-index: 2;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 4px 10px;
+	border-radius: var(--border-radius-pill, 16px);
+	background: var(--color-main-background);
+	border: 1px solid var(--color-border);
+	box-shadow: 0 1px 4px var(--color-box-shadow);
+	font-size: 0.85em;
+	color: var(--color-text-maxcontrast);
+}
+
+.dm-tree__reveal-spinner {
+	display: inline-block;
+	width: 14px;
+	height: 14px;
+	border: 2px solid var(--color-border-dark);
+	border-top-color: var(--color-main-text);
+	border-radius: 50%;
+	animation: dm-tree-spin 0.6s linear infinite;
 }
 
 .dm-tree__header-row,
@@ -444,9 +504,20 @@ export default {
 }
 
 .dm-tree__name {
+	min-width: 0;
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
+}
+
+.dm-tree__uid {
+	flex-shrink: 0;
+	max-width: 140px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--color-text-maxcontrast);
+	font-size: 0.85em;
 }
 
 .dm-tree__arrow {
@@ -491,10 +562,12 @@ export default {
 }
 
 .dm-tree__spinner {
+	/* content-box (the default) so width+height+border stays within the
+	   16x16px arrow button — 12 + 2*2 = 16. */
 	display: inline-block;
-	width: 10px;
-	height: 10px;
-	border: 1.5px solid var(--color-border-dark);
+	width: 12px;
+	height: 12px;
+	border: 2px solid var(--color-border-dark);
 	border-top-color: var(--color-main-text);
 	border-radius: 50%;
 	animation: dm-tree-spin 0.6s linear infinite;
