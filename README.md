@@ -88,8 +88,34 @@ Open **DiskMap** from the app menu. The navigation on the left lists:
 - One entry per **team folder**, with its current size; administrators only.
 
 Click a folder in the tree to highlight its region on the map, or a tile on the
-map to reveal that file in the tree. There are no OCC commands and nothing to
-configure.
+map to reveal that file in the tree. DiskMap is read-only — there is nothing to
+configure, and nothing in it can change or delete a file.
+
+### Restricting who sees DiskMap
+
+DiskMap has no visibility setting of its own, on purpose: Nextcloud's built-in
+per-app group restriction already does this, and does it more thoroughly than
+an in-app toggle could. To make DiskMap administrator-only, go to
+**Settings → Apps → DiskMap** and pick *Enable for specific groups*, or run:
+
+```bash
+php occ app:enable diskmap --groups=admin     # restrict
+php occ app:enable diskmap                    # back to everyone
+```
+
+Restricted accounts lose the app completely — it disappears from the app menu,
+and every page and API endpoint answers *App is not enabled* at the framework
+level, before any DiskMap code runs. A settings toggle inside the app could
+only have hidden the navigation entry.
+
+Note this restricts by *group*, not by administrator status: delegated
+administrators outside the `admin` group would be excluded too. Any group works
+if you want a different audience.
+
+Worth deciding deliberately rather than by default, though. The per-user view is
+strictly scoped to the caller's own files — it cannot reveal anyone else's data —
+and letting people see what is filling their own quota tends to *reduce* support
+requests rather than create them.
 
 ## Known Limitations
 
