@@ -9,6 +9,7 @@ declare(strict_types=1);
 
 namespace OCA\DiskMap\GroupFolders;
 
+use OCP\DB\QueryBuilder\IQueryBuilder;
 use OCP\IDBConnection;
 
 /**
@@ -39,8 +40,8 @@ use OCP\IDBConnection;
  */
 class LayoutDetector {
 
-    private ?int $legacyRootStorageIdCache = null;
-    private bool $legacyRootStorageResolved = false;
+    /** @var int[]|null */
+    private ?array $legacyRootStorageCandidatesCache = null;
 
     public function __construct(private IDBConnection $db) {
     }
@@ -59,7 +60,7 @@ class LayoutDetector {
             );
         }
 
-        $rootStorageId = $this->findLegacyRootStorageId();
+        $rootStorageId = $this->findLegacyRootStorageId($folderId);
 
         return new ResolvedTeamFolderStorage(
             filesStorageId: $rootStorageId,
@@ -90,7 +91,7 @@ class LayoutDetector {
             ->setMaxResults(1);
 
         $result = $qb->executeQuery();
-        $row = $result->fetchAssociative();
+        $row = $result->fetch();
         $result->closeCursor();
 
         return $row ? (int)$row['numeric_id'] : null;
@@ -98,28 +99,64 @@ class LayoutDetector {
 
     /**
      * The storage hosting the shared, top-level "__groupfolders" directory
-     * used by the legacy layout. Found via its own filecache row rather than
-     * guessing an oc_storages.id string format, so this doesn't depend on
-     * whether the install uses local or object storage for its data
-     * directory. Cached per request — it's the same for every legacy-layout
-     * folder.
+     * used by the legacy layout, verified per folder id rather than trusted
+     * from a single global lookup. Found live in production: an instance
+     * that has gone through a data-directory change (or similar storage
+     * renumbering) can carry more than one filecache row named
+     * "__groupfolders" — an old, orphaned one alongside the real, live one —
+     * with no ordering guarantee over which a bare `setMaxResults(1)` query
+     * returns. Picking the wrong one silently zeroed out every legacy-layout
+     * folder's size (they all resolved to a storage that has no
+     * "__groupfolders/{id}" row for them). Checking each candidate storage
+     * for this specific folder id's own path sidesteps the ambiguity
+     * entirely — whichever storage actually has it is the right one, no
+     * matter how many stale "__groupfolders" rows also happen to exist.
      */
-    private function findLegacyRootStorageId(): ?int {
-        if ($this->legacyRootStorageResolved) {
-            return $this->legacyRootStorageIdCache;
+    private function findLegacyRootStorageId(int $folderId): ?int {
+        foreach ($this->legacyRootStorageCandidates() as $storageId) {
+            $qb = $this->db->getQueryBuilder();
+            $qb->select('fileid')
+                ->from('filecache')
+                ->where($qb->expr()->eq('storage', $qb->createNamedParameter($storageId, IQueryBuilder::PARAM_INT)))
+                ->andWhere($qb->expr()->eq('path', $qb->createNamedParameter('__groupfolders/' . $folderId)))
+                ->setMaxResults(1);
+
+            $result = $qb->executeQuery();
+            $row = $result->fetch();
+            $result->closeCursor();
+
+            if ($row) {
+                return $storageId;
+            }
         }
-        $this->legacyRootStorageResolved = true;
+        return null;
+    }
+
+    /**
+     * Every storage carrying a top-level "__groupfolders" filecache row —
+     * normally just one, but see findLegacyRootStorageId()'s docblock for
+     * why more than one can exist. Cached per request; the underlying data
+     * doesn't change mid-request.
+     *
+     * @return int[]
+     */
+    private function legacyRootStorageCandidates(): array {
+        if ($this->legacyRootStorageCandidatesCache !== null) {
+            return $this->legacyRootStorageCandidatesCache;
+        }
 
         $qb = $this->db->getQueryBuilder();
         $qb->select('storage')
             ->from('filecache')
-            ->where($qb->expr()->eq('path_hash', $qb->createNamedParameter(md5('__groupfolders'))))
-            ->setMaxResults(1);
+            ->where($qb->expr()->eq('path_hash', $qb->createNamedParameter(md5('__groupfolders'))));
 
         $result = $qb->executeQuery();
-        $row = $result->fetchAssociative();
+        $ids = [];
+        while ($row = $result->fetch()) {
+            $ids[] = (int)$row['storage'];
+        }
         $result->closeCursor();
 
-        return $this->legacyRootStorageIdCache = $row ? (int)$row['storage'] : null;
+        return $this->legacyRootStorageCandidatesCache = $ids;
     }
 }

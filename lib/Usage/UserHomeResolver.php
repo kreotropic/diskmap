@@ -36,7 +36,7 @@ class UserHomeResolver {
             ->setMaxResults(1);
 
         $result = $qb->executeQuery();
-        $row = $result->fetchAssociative();
+        $row = $result->fetch();
         $result->closeCursor();
 
         return $row ? (int)$row['numeric_id'] : null;

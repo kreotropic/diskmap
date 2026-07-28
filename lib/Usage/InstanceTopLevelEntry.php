@@ -19,7 +19,16 @@ final class InstanceTopLevelEntry {
         // The uid, or the team folder's mount_point — this becomes the path
         // segment children live under (e.g. "alice/Documents/…"), so it's
         // what FolderTree.vue's navPath and Treemap.vue's pathFor() both use.
+        // Stays the raw uid even on an LDAP/AD-backed instance where that's
+        // an opaque UUID — navigation must stay stable even if a display
+        // name changes. $displayName below is the human-readable label.
         public readonly string $name,
+        // What the UI actually shows for this entry. For team folders and
+        // external storages this is the same as $name (already human names).
+        // For users it's IUserManager::get($uid)?->getDisplayName(), falling
+        // back to the uid itself when the account can't be resolved — same
+        // contract as share_audit_dashboard's DisplayNameResolver.
+        public readonly string $displayName,
         public readonly string $kind, // 'user' | 'teamfolder'
         public readonly int $storageId,
         public readonly string $path,

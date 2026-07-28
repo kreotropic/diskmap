@@ -13,6 +13,7 @@ use OCA\DiskMap\GroupFolders\LayoutDetector;
 use OCP\DB\QueryBuilder\IQueryBuilder;
 use OCP\IConfig;
 use OCP\IDBConnection;
+use OCP\IUserManager;
 
 /**
  * Lists every top-level entry of the whole-instance scope (plan Phase 3d):
@@ -31,6 +32,7 @@ class InstanceIndex {
         private IDBConnection $db,
         private LayoutDetector $layoutDetector,
         private IConfig $config,
+        private IUserManager $userManager,
     ) {
     }
 
@@ -86,7 +88,7 @@ class InstanceIndex {
 
         $result = $qb->executeQuery();
         $sum = 0;
-        while ($row = $result->fetchAssociative()) {
+        while ($row = $result->fetch()) {
             $sum += max(0, (int)$row['size']);
         }
         $result->closeCursor();
@@ -103,7 +105,7 @@ class InstanceIndex {
         $qb = $this->db->getQueryBuilder();
         $qb->select('folder_id')->from('group_folders');
         $result = $qb->executeQuery();
-        $folderIds = array_map(static fn (array $row) => (int)$row['folder_id'], $result->fetchAllAssociative());
+        $folderIds = array_map(static fn (array $row) => (int)$row['folder_id'], $result->fetchAll());
         $result->closeCursor();
 
         $sum = 0;
@@ -128,7 +130,7 @@ class InstanceIndex {
             ->setMaxResults(1);
 
         $result = $qb->executeQuery();
-        $row = $result->fetchAssociative();
+        $row = $result->fetch();
         $result->closeCursor();
 
         return $row ? max(0, (int)$row['size']) : 0;
@@ -159,7 +161,7 @@ class InstanceIndex {
 
         $result = $qb->executeQuery();
         $entries = [];
-        while ($row = $result->fetchAssociative()) {
+        while ($row = $result->fetch()) {
             $storageKey = (string)$row['id'];
             $uid = str_starts_with($storageKey, 'home::')
                 ? substr($storageKey, strlen('home::'))
@@ -170,6 +172,7 @@ class InstanceIndex {
 
             $entries[] = new InstanceTopLevelEntry(
                 name: $uid,
+                displayName: $this->displayNameForUid($uid),
                 kind: 'user',
                 storageId: (int)$row['numeric_id'],
                 path: 'files',
@@ -195,7 +198,7 @@ class InstanceIndex {
         $qb = $this->db->getQueryBuilder();
         $qb->select('folder_id', 'mount_point')->from('group_folders');
         $result = $qb->executeQuery();
-        $rows = $result->fetchAllAssociative();
+        $rows = $result->fetchAll();
         $result->closeCursor();
 
         $entries = [];
@@ -210,6 +213,7 @@ class InstanceIndex {
             }
             $entries[] = new InstanceTopLevelEntry(
                 name: (string)$row['mount_point'],
+                displayName: (string)$row['mount_point'],
                 kind: 'teamfolder',
                 storageId: $layout->filesStorageId,
                 path: $layout->filesPath,
@@ -263,7 +267,7 @@ class InstanceIndex {
 
         $result = $qb->executeQuery();
         $entries = [];
-        while ($row = $result->fetchAssociative()) {
+        while ($row = $result->fetch()) {
             $storageKey = (string)$row['id'];
             $numericId = (int)$row['numeric_id'];
             if ($storageKey === $dataDirStorageKey || in_array($numericId, $excludeStorageIds, true)) {
@@ -272,6 +276,7 @@ class InstanceIndex {
 
             $entries[] = new InstanceTopLevelEntry(
                 name: $this->externalDisplayName($storageKey),
+                displayName: $this->externalDisplayName($storageKey),
                 kind: 'external',
                 storageId: $numericId,
                 path: '',
@@ -283,6 +288,19 @@ class InstanceIndex {
         $result->closeCursor();
 
         return $entries;
+    }
+
+    /**
+     * IUserManager::get() has no true bulk form, but listUsers() already
+     * calls this once per uid it found (not per row anywhere else), so the
+     * cost is bounded by the account count, same tradeoff
+     * share_audit_dashboard's DisplayNameResolver already accepts in this
+     * exact production environment. Falls back to the uid itself if the
+     * account can't be resolved (deleted between the filecache read and now,
+     * or a backend hiccup) — never leaves the UI with an empty label.
+     */
+    private function displayNameForUid(string $uid): string {
+        return $this->userManager->get($uid)?->getDisplayName() ?: $uid;
     }
 
     /**
@@ -314,7 +332,7 @@ class InstanceIndex {
             ->setMaxResults(1);
 
         $result = $qb->executeQuery();
-        $row = $result->fetchAssociative();
+        $row = $result->fetch();
         $result->closeCursor();
 
         return $row ? [

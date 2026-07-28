@@ -3,6 +3,7 @@
   - SPDX-License-Identifier: AGPL-3.0-or-later
   -->
 <template>
+
 	<div class="dm-tree">
 		<NcLoadingIcon v-if="loadingRoot" :size="32" />
 		<NcNoteCard v-else-if="error" type="error">
@@ -239,7 +240,11 @@ export default {
 		makeNode(item, depth, parentNavPath, parentSize) {
 			const navPath = parentNavPath === '' ? item.name : `${parentNavPath}/${item.name}`
 			return {
-				name: item.name,
+				// item.displayName is only set on a top-level instance row (a
+				// user's home shows their display name instead of the raw
+				// uid on an LDAP/AD-backed instance) — navPath above still
+				// uses item.name, so navigation stays stable either way.
+				name: item.displayName ?? item.name,
 				navPath,
 				size: item.size,
 				mtime: item.mtime,

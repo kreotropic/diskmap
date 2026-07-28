@@ -97,7 +97,7 @@ class TeamFolderService {
             ->orderBy('mount_point', 'ASC');
 
         $result = $qb->executeQuery();
-        $rows = $result->fetchAllAssociative();
+        $rows = $result->fetchAll();
         $result->closeCursor();
 
         return $rows;
@@ -130,7 +130,7 @@ class TeamFolderService {
 
         $result = $qb->executeQuery();
         $byFolder = [];
-        while ($row = $result->fetchAssociative()) {
+        while ($row = $result->fetch()) {
             $folderId = (int)$row['folder_id'];
             $circleId = $withCircles ? (string)($row['circle_id'] ?? '') : '';
 

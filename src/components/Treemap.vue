@@ -200,6 +200,20 @@ export default {
 			}
 			return segments.join('/')
 		},
+		// Same walk as pathFor(), for the tooltip only — prefers displayName
+		// per segment (only ever set on the top-level instance segment) so an
+		// LDAP/AD uid doesn't leak into the human-readable breadcrumb even
+		// though pathFor() itself must keep returning the raw-uid path for
+		// navigation (reveal-path, keyFor(), highlight matching).
+		displayPathFor(node) {
+			const segments = []
+			let cur = node
+			while (cur.parent) {
+				segments.unshift(cur.data.displayName ?? cur.data.name)
+				cur = cur.parent
+			}
+			return segments.join('/')
+		},
 		keyFor(node) {
 			if (node.data.type === OTHERS_TYPE) {
 				// Every expanded folder can have its own "other" bucket now
@@ -241,12 +255,17 @@ export default {
 			return false
 		},
 		isClickable(data) {
-			return data.type === 'file'
+			// An unexpanded folder tile is common at this node budget on a
+			// large scope (most of the tree stays folded into flat "folder"
+			// tiles rather than reaching individual files) — it needs to be
+			// clickable too, not just files, or most of what's actually on
+			// screen would be dead space with no map↔tree sync at all.
+			return data.type === 'file' || data.type === 'folder'
 		},
 		// A single click both selects (visual feedback in the map itself)
 		// and tells the folder tree above to expand down to and highlight
-		// this same file — the actual WinDirStat map↔tree sync, not an
-		// external Files-app link.
+		// this same file or folder — the actual WinDirStat map↔tree sync,
+		// not an external Files-app link.
 		activate(node) {
 			if (!this.isClickable(node.data)) {
 				return
@@ -279,7 +298,11 @@ export default {
 		},
 		rectLabel(data) {
 			if (data.type !== OTHERS_TYPE) {
-				return data.name
+				// displayName is only set on a top-level instance tile (a
+				// user's home on an LDAP/AD-backed instance, where data.name
+				// stays the raw uid — pathFor()/keyFor() still need it for
+				// navigation, only the on-screen label prefers the human name).
+				return data.displayName ?? data.name
 			}
 			if (data.fileCount > 0) {
 				const count = data.countExact ? String(data.fileCount) : `${data.fileCount}+`
@@ -290,7 +313,7 @@ export default {
 		rowLabel(node) {
 			// Full path, not just the filename — these files can be anywhere
 			// in the tree, so the path is what tells you where to look.
-			return node.data.type === OTHERS_TYPE ? this.rectLabel(node.data) : this.pathFor(node)
+			return node.data.type === OTHERS_TYPE ? this.rectLabel(node.data) : this.displayPathFor(node)
 		},
 		showTooltip(node, event) {
 			this.hoveredKey = this.keyFor(node)

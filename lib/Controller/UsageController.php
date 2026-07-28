@@ -109,8 +109,13 @@ class UsageController extends Controller {
      * returns in roughly bounded time.
      */
     #[NoAdminRequired]
-    public function map(string $scope, string $identifier, string $path = '', int $maxNodes = 400): JSONResponse {
-        $maxNodes = max(20, min($maxNodes, 800));
+    public function map(string $scope, string $identifier, string $path = '', int $maxNodes = 1200): JSONResponse {
+        // Ceiling raised from 800 to 2000 (the plan's own original "SVG up to
+        // ~2000 rectangles" target) once production confirmed this stays
+        // fast even on a 300GB+/360k-file team folder — see
+        // MAX_TREE_QUERIES's matching bump, which is what actually lets a
+        // higher node budget get spent instead of hitting the query cap first.
+        $maxNodes = max(20, min($maxNodes, 2000));
 
         try {
             $scopeObj = Scope::fromRequest($scope, $identifier, $path);

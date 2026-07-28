@@ -68,7 +68,7 @@ class FilecacheUsageSource implements IUsageSource {
             ->setMaxResults(1);
 
         $result = $qb->executeQuery();
-        $row = $result->fetchAssociative();
+        $row = $result->fetch();
         $result->closeCursor();
 
         return $row ? (int)$row['mtime'] : null;
@@ -186,13 +186,23 @@ class FilecacheUsageSource implements IUsageSource {
         // instance has more top-level entries than the budget allows, keep
         // the biggest ones individually and fold the rest into one "other"
         // tile rather than blowing the budget before any real expansion happens.
-        $keepCount = max(1, $maxNodes - 1);
+        //
+        // Capped at MAX_INSTANCE_TOP_TILES (not just maxNodes - 1): on an
+        // instance with hundreds of accounts, "maxNodes - 1" alone reserves
+        // almost the *entire* node budget just for flat top-level breadth,
+        // leaving expandFrontier() with essentially nothing to recurse with
+        // — every tile stays a flat, unexpanded leaf (folders, never files).
+        // Confirmed live: an instance with ~300+ top-level entries produced
+        // a map with zero recursion under the old formula. Capping breadth
+        // keeps the biggest accounts individually named while guaranteeing
+        // most of the budget goes to actually drilling into their contents.
+        $keepCount = max(1, min($maxNodes - 1, self::MAX_INSTANCE_TOP_TILES));
         $kept = array_slice($entries, 0, $keepCount);
         $overflow = array_slice($entries, $keepCount);
 
         $builderRoot = $this->makeBuilderNode(storageId: 0, fileid: 0, name: '', size: $totalSize, type: 'folder', mimetype: null, mtime: null);
 
-        $topNodes = array_map(fn (InstanceTopLevelEntry $e) => $this->makeBuilderNode(
+        $keptNodes = array_map(fn (InstanceTopLevelEntry $e) => $this->makeBuilderNode(
             storageId: $e->storageId,
             fileid: $e->fileid,
             name: $e->name,
@@ -200,8 +210,17 @@ class FilecacheUsageSource implements IUsageSource {
             type: 'folder',
             mimetype: null,
             mtime: $e->mtime,
+            displayName: $e->displayName,
         ), $kept);
 
+        // The overflow "other" tile aggregates many different accounts, so
+        // unlike every other node here it has no single real storage/fileid
+        // to expand — it must stay a flat leaf. Only $keptNodes (one real
+        // entry each) go into expandFrontier()'s frontier; the "other" tile
+        // is added to $topNodes (what's actually rendered) afterwards, same
+        // as the per-folder "other" bucket expandFrontier() itself builds
+        // inline and never re-queues.
+        $topNodes = $keptNodes;
         if (!empty($overflow)) {
             $overflowSum = array_sum(array_map(static fn (InstanceTopLevelEntry $e) => max(0, $e->size), $overflow));
             $topNodes[] = $this->makeOtherNode($overflowSum, count($overflow), true);
@@ -209,14 +228,21 @@ class FilecacheUsageSource implements IUsageSource {
 
         $builderRoot['ref']->children = $topNodes;
 
-        $this->expandFrontier($topNodes, max(1, $maxNodes - count($topNodes)));
+        $this->expandFrontier($keptNodes, max(1, $maxNodes - count($topNodes)));
 
         return ['root' => $this->toUsageNode($builderRoot['ref'])];
     }
 
     private const TREE_LEVEL_LIMIT = 500;
-    private const MAX_TREE_QUERIES = 200;
+    // Raised from 200 alongside UsageController::map()'s node-budget ceiling
+    // (400 -> 1200 default, 800 -> 2000 max) — each query here is a single
+    // indexed fs_parent lookup, confirmed fast in production even against a
+    // 300GB+/360k-file team folder, so the extra round trips are cheap; this
+    // is what actually lets the higher node budget get spent on real
+    // expansion instead of getting cut off by the query cap first.
+    private const MAX_TREE_QUERIES = 500;
     private const SMALL_FILE_RATIO = 0.003;
+    private const MAX_INSTANCE_TOP_TILES = 40;
 
     /**
      * The best-first expansion loop shared by mapTree() and
@@ -307,7 +333,7 @@ class FilecacheUsageSource implements IUsageSource {
      * 'ref' key to a small mutable object (for the shared mutation) —
      * toUsageNode() walks 'ref' objects into the final readonly tree.
      */
-    private function makeBuilderNode(int $storageId, int $fileid, string $name, int $size, string $type, ?string $mimetype, ?int $mtime): array {
+    private function makeBuilderNode(int $storageId, int $fileid, string $name, int $size, string $type, ?string $mimetype, ?int $mtime, ?string $displayName = null): array {
         $ref = new \stdClass();
         $ref->fileid = $fileid;
         $ref->name = $name;
@@ -318,6 +344,7 @@ class FilecacheUsageSource implements IUsageSource {
         $ref->children = null;
         $ref->fileCount = null;
         $ref->countExact = null;
+        $ref->displayName = $displayName;
         return [
             'storageId' => $storageId,
             'fileid' => $fileid,
@@ -345,6 +372,7 @@ class FilecacheUsageSource implements IUsageSource {
             'children' => null,
             'fileCount' => $count,
             'countExact' => $countExact,
+            'displayName' => null,
         ];
     }
 
@@ -365,6 +393,7 @@ class FilecacheUsageSource implements IUsageSource {
                 $ref->children,
             ) : null,
             countExact: $ref->countExact,
+            displayName: $ref->displayName ?? null,
         );
     }
 
@@ -385,6 +414,7 @@ class FilecacheUsageSource implements IUsageSource {
         $ref->children = $child['children'];
         $ref->fileCount = $child['fileCount'];
         $ref->countExact = $child['countExact'];
+        $ref->displayName = $child['displayName'] ?? null;
         return $ref;
     }
 
@@ -403,7 +433,7 @@ class FilecacheUsageSource implements IUsageSource {
             ->setMaxResults($limit + 1); // one extra row cheaply reveals truncation, no separate COUNT(*)
 
         $result = $qb->executeQuery();
-        $rows = $result->fetchAllAssociative();
+        $rows = $result->fetchAll();
         $result->closeCursor();
 
         $truncated = count($rows) > $limit;
@@ -462,7 +492,7 @@ class FilecacheUsageSource implements IUsageSource {
 
         $count = 0;
         $composition = [];
-        while ($row = $result->fetchAssociative()) {
+        while ($row = $result->fetch()) {
             $count += (int)$row['c'];
             if ($row['mimetype'] !== null) {
                 $composition[(string)$row['mimetype']] = (int)$row['total'];
@@ -485,7 +515,7 @@ class FilecacheUsageSource implements IUsageSource {
             ->setMaxResults(1);
 
         $result = $qb->executeQuery();
-        $row = $result->fetchAssociative();
+        $row = $result->fetch();
         $result->closeCursor();
 
         return $row ? [
@@ -584,6 +614,7 @@ class FilecacheUsageSource implements IUsageSource {
                     fileCount: $composition['count'],
                     composition: $composition['composition'],
                     kind: $e->kind,
+                    displayName: $e->displayName,
                 );
             }, $shown);
 
@@ -649,7 +680,7 @@ class FilecacheUsageSource implements IUsageSource {
             ->setMaxResults(1);
 
         $result = $qb->executeQuery();
-        $row = $result->fetchAssociative();
+        $row = $result->fetch();
         $result->closeCursor();
 
         return $row ? (int)$row['size'] : null;
@@ -664,7 +695,7 @@ class FilecacheUsageSource implements IUsageSource {
                 ->setMaxResults(1);
 
             $result = $qb->executeQuery();
-            $row = $result->fetchAssociative();
+            $row = $result->fetch();
             $result->closeCursor();
 
             // -1 never matches a real mimetype id, so a missing row safely

@@ -44,6 +44,13 @@ final class UsageNode implements \JsonSerializable {
         // tell the three apart at a glance. Null everywhere else, including
         // every deeper folder inside one of them (those are just folders).
         public readonly ?string $kind = null,
+        // The human-readable label for a top-level instance row — set
+        // alongside $kind, null everywhere else. $name stays the raw uid
+        // (path segments/navigation must stay stable even on an LDAP/AD
+        // instance where the uid is an opaque UUID); this is what the UI
+        // actually displays instead. Falls back to $name on the frontend
+        // when null, so every caller can just do `displayName ?? name`.
+        public readonly ?string $displayName = null,
         // Recursive per-mimetype size breakdown for a children() 'folder'
         // node — e.g. ['image/png' => 4096, 'application/pdf' => 2048] —
         // powers the tree pane's "Composição" stacked bar. Categorizing raw
@@ -68,6 +75,7 @@ final class UsageNode implements \JsonSerializable {
             'countExact' => $this->countExact,
             'kind' => $this->kind,
             'composition' => $this->composition,
+            'displayName' => $this->displayName,
         ];
     }
 }
