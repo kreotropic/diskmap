@@ -69,7 +69,7 @@ import { translate as t } from '@nextcloud/l10n'
 
 import { fetchChildren } from '../services/api.js'
 import { formatBytes, formatDate, formatCount } from '../utils/format.js'
-import { categoryForMimetype, CATEGORY_OTHER } from '../utils/mimetypeCategory.js'
+import { categoryForMimetype, categoryForFile, CATEGORY_OTHER } from '../utils/mimetypeCategory.js'
 
 const OTHERS_TYPE = 'other'
 // One level's worth of children per fetch — comfortably covers realistic
@@ -283,7 +283,7 @@ export default {
 				return [{ category: CATEGORY_OTHER, pct: 100, color: 'var(--dm-cat-other)' }]
 			}
 			if (node.type === 'file') {
-				const category = categoryForMimetype(node.mimetype)
+				const category = categoryForFile(node.name, node.mimetype)
 				return [{ category, pct: 100, color: `var(--dm-cat-${category})` }]
 			}
 			if (!node.composition || node.size <= 0) {

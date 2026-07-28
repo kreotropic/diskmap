@@ -465,8 +465,16 @@ class FilecacheUsageSource implements IUsageSource {
      * @return array{count: int, composition: array<string, int>} composition
      *     maps mimetype string ("image/png") to summed size — categorizing
      *     that into the 5 UI buckets (document/image/video/archive/other) is
-     *     the frontend's job (utils/mimetypeCategory.js), so this backend
-     *     code has no category logic of its own to keep in sync with it.
+     *     the frontend's job (utils/mimetypeCategory.js). The one exception:
+     *     Outlook .pst and AutoCAD .dwg have no dedicated Nextcloud mimetype
+     *     (both scan as the generic application/octet-stream, same as any
+     *     other file type Nextcloud doesn't recognize), so once grouped into
+     *     this aggregate there's no per-file name left for the frontend to
+     *     fall back on the way categoryForFile() does for a single file's own
+     *     tile. The query below reclassifies just those two extensions into
+     *     synthetic pseudo-mimetypes ("application/x-diskmap-pst/dwg") that
+     *     mimetypeCategory.js's categoryForMimetype() knows to bucket as
+     *     archive — everything else keeps its real mimetype untouched.
      */
     private function recursiveComposition(int $storageId, string $path, int $size): array {
         // A folder's own aggregate size already tells us whether it has any
@@ -483,11 +491,17 @@ class FilecacheUsageSource implements IUsageSource {
         $likePattern = $path !== '' ? $this->db->escapeLikeParameter($path) . '/%' : '%';
         $folderMimetypeId = $this->folderMimetypeId();
 
-        $sql = 'SELECT m.mimetype AS mimetype, COUNT(*) AS c, SUM(f.size) AS total
+        $sql = "SELECT
+                    CASE
+                        WHEN m.mimetype = 'application/octet-stream' AND LOWER(f.name) LIKE '%.pst' THEN 'application/x-diskmap-pst'
+                        WHEN m.mimetype = 'application/octet-stream' AND LOWER(f.name) LIKE '%.dwg' THEN 'application/x-diskmap-dwg'
+                        ELSE m.mimetype
+                    END AS mimetype,
+                    COUNT(*) AS c, SUM(f.size) AS total
                 FROM `*PREFIX*filecache` f USE INDEX (fs_storage_path_prefix)
                 LEFT JOIN `*PREFIX*mimetypes` m ON f.mimetype = m.id
                 WHERE f.storage = ? AND f.path LIKE ? AND f.mimetype != ?
-                GROUP BY m.mimetype';
+                GROUP BY mimetype";
         $result = $this->db->executeQuery($sql, [$storageId, $likePattern, $folderMimetypeId]);
 
         $count = 0;

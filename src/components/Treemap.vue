@@ -68,7 +68,7 @@ import { translate as t } from '@nextcloud/l10n'
 
 import { fetchMap } from '../services/api.js'
 import { formatBytes } from '../utils/format.js'
-import { categoryForMimetype, CATEGORY_OTHER } from '../utils/mimetypeCategory.js'
+import { categoryForFile, CATEGORY_OTHER } from '../utils/mimetypeCategory.js'
 
 const CANVAS_WIDTH = 960
 const CANVAS_HEIGHT = 380
@@ -230,7 +230,7 @@ export default {
 			if (data.type !== 'file') {
 				return CATEGORY_OTHER
 			}
-			return categoryForMimetype(data.mimetype)
+			return categoryForFile(data.name, data.mimetype)
 		},
 		colorFor(data) {
 			return `var(--dm-cat-${this.categoryFor(data)})`

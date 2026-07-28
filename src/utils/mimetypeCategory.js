@@ -20,8 +20,19 @@ export const CATEGORY_VIDEO = 'video'
 export const CATEGORY_ARCHIVE = 'archive'
 export const CATEGORY_OTHER = 'other'
 
-const ARCHIVE_PATTERN = /zip|tar|7z|rar|gzip|bzip2|x-xz|compress|iso9660|diskimage|executable|msdownload|portable-executable|debian\.binary-package|x-rpm|x-msi|cab-compressed/i
+// application/x-diskmap-{pst,dwg} are synthetic — never a real mimetype
+// Nextcloud assigns — produced by FilecacheUsageSource::recursiveComposition()'s
+// SQL for a folder's aggregated composition (see its docblock): .pst/.dwg
+// have no dedicated mimetype in Nextcloud, so they'd otherwise be
+// indistinguishable from any other unrecognized binary sharing the generic
+// application/octet-stream. Matched here so a folder's "Composição" bar
+// buckets them as archive the same as a single file's own tile does (via
+// categoryForFile() below, the per-file equivalent using the filename
+// instead of a backend-computed pseudo-mimetype).
+const ARCHIVE_PATTERN = /zip|tar|7z|rar|gzip|bzip2|x-xz|compress|iso9660|diskimage|executable|msdownload|portable-executable|debian\.binary-package|x-rpm|x-msi|cab-compressed|^application\/x-diskmap-(pst|dwg)$/i
 const DOCUMENT_PATTERN = /^text\/|^application\/pdf$|^application\/(msword|vnd\.oasis|vnd\.openxmlformats|rtf|vnd\.ms-(excel|powerpoint))/i
+const GENERIC_BINARY_MIMETYPE = 'application/octet-stream'
+const EXTENSION_ARCHIVE_PATTERN = /\.(pst|dwg)$/i
 
 /**
  * @param {string|null} mimetype
@@ -44,4 +55,23 @@ export function categoryForMimetype(mimetype) {
 		return CATEGORY_DOCUMENT
 	}
 	return CATEGORY_OTHER
+}
+
+/**
+ * Extension-aware variant of categoryForMimetype() for a single named file
+ * (a map tile or a tree file row, both of which know their own name) —
+ * Outlook .pst archives and AutoCAD .dwg drawings have no dedicated
+ * mimetype in Nextcloud, so they scan as the generic application/octet-stream,
+ * same as any other file type Nextcloud doesn't recognize. Only overrides
+ * the plain mimetype result when the mimetype is that generic fallback, so
+ * a real archive mimetype is never second-guessed by a coincidental name.
+ * @param {string|null} name
+ * @param {string|null} mimetype
+ * @return {string} one of CATEGORY_DOCUMENT / _IMAGE / _VIDEO / _ARCHIVE / _OTHER
+ */
+export function categoryForFile(name, mimetype) {
+	if ((!mimetype || mimetype === GENERIC_BINARY_MIMETYPE) && name && EXTENSION_ARCHIVE_PATTERN.test(name)) {
+		return CATEGORY_ARCHIVE
+	}
+	return categoryForMimetype(mimetype)
 }
