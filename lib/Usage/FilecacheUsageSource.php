@@ -163,7 +163,7 @@ class FilecacheUsageSource implements IUsageSource {
             mtime: $rootRow['mtime'],
         );
 
-        $this->expandFrontier([$builderRoot], $maxNodes);
+        $this->expandFrontier([$builderRoot], $maxNodes, (int)$rootRow['size']);
 
         return ['root' => $this->toUsageNode($builderRoot['ref'])];
     }
@@ -228,7 +228,7 @@ class FilecacheUsageSource implements IUsageSource {
 
         $builderRoot['ref']->children = $topNodes;
 
-        $this->expandFrontier($keptNodes, max(1, $maxNodes - count($topNodes)));
+        $this->expandFrontier($keptNodes, max(1, $maxNodes - count($topNodes)), $totalSize);
 
         return ['root' => $this->toUsageNode($builderRoot['ref'])];
     }
@@ -241,7 +241,21 @@ class FilecacheUsageSource implements IUsageSource {
     // is what actually lets the higher node budget get spent on real
     // expansion instead of getting cut off by the query cap first.
     private const MAX_TREE_QUERIES = 500;
-    private const SMALL_FILE_RATIO = 0.003;
+    private const SMALL_FILE_RATIO = 0.005;
+    /**
+     * A second, absolute fold-in floor, expressed as a share of the *whole
+     * map* rather than of the immediate parent.
+     *
+     * SMALL_FILE_RATIO alone can't keep tiles legible, because it is measured
+     * against each folder's own size: a file can be a comfortable 5% of a
+     * small folder and still be invisible once that folder is itself a sliver
+     * of the map. Measured on the dev instance, that left 324 of 389 rendered
+     * tiles under 200px² — smaller than a favicon, and only 24 tiles large
+     * enough to carry a label at all. Since a tile's on-screen area is its
+     * share of the ROOT total (the canvas is a fixed size), a root-relative
+     * floor is what actually bounds legibility.
+     */
+    private const MIN_TILE_ROOT_RATIO = 0.0025;
     private const MAX_INSTANCE_TOP_TILES = 40;
 
     /**
@@ -253,7 +267,11 @@ class FilecacheUsageSource implements IUsageSource {
      * own docblock for why best-first (not BFS/DFS) is what makes the
      * budget land on the biggest, most map-relevant content.
      */
-    private function expandFrontier(array $frontier, int $budget): void {
+    private function expandFrontier(array $frontier, int $budget, int $rootSize = 0): void {
+        // Absolute floor below which a child can never earn its own tile,
+        // however large a share of its immediate parent it happens to be —
+        // see MIN_TILE_ROOT_RATIO.
+        $minTileSize = (int)floor(max(0, $rootSize) * self::MIN_TILE_ROOT_RATIO);
         $queries = 0;
         while ($budget > 1 && $queries < self::MAX_TREE_QUERIES && !empty($frontier)) {
             usort($frontier, static fn (array $a, array $b) => $b['size'] <=> $a['size']);
@@ -269,7 +287,7 @@ class FilecacheUsageSource implements IUsageSource {
             }
 
             $folderMimetypeId = $this->folderMimetypeId();
-            $threshold = max(1, (int)floor($node['size'] * self::SMALL_FILE_RATIO));
+            $threshold = max(1, (int)floor($node['size'] * self::SMALL_FILE_RATIO), $minTileSize);
             $big = [];
             $bigSum = 0;
             $smallCount = 0;

@@ -27,7 +27,6 @@
 				<div class="dm-tree__header-row">
 					<span class="dm-tree__col-name" />
 					<span class="dm-tree__col-composition">{{ t('diskmap', 'Composition') }}</span>
-					<span class="dm-tree__col-pct">{{ t('diskmap', '% of parent') }}</span>
 					<span class="dm-tree__col-size">{{ t('diskmap', 'Size') }}</span>
 					<span class="dm-tree__col-count">{{ t('diskmap', 'File count') }}</span>
 					<span class="dm-tree__col-mtime">{{ t('diskmap', 'Last modified') }}</span>
@@ -51,7 +50,7 @@
 						</button>
 						<span v-else class="dm-tree__arrow-placeholder" />
 						<span class="dm-tree__icon">{{ iconFor(node) }}</span>
-						<span class="dm-tree__name">{{ node.displayName ?? node.name }}</span>
+						<span class="dm-tree__name" @mouseenter="titleIfTruncated">{{ node.displayName ?? node.name }}</span>
 						<span
 							v-if="node.displayName && node.displayName !== node.name"
 							class="dm-tree__uid"
@@ -66,10 +65,9 @@
 								:style="{ width: seg.pct + '%', background: seg.color }" />
 						</span>
 					</span>
-					<span class="dm-tree__col-pct">{{ pct(node).toFixed(1) }}%</span>
 					<span class="dm-tree__col-size">{{ formatBytes(node.size) }}</span>
 					<span class="dm-tree__col-count">{{ formatCount(node.fileCount) }}</span>
-					<span class="dm-tree__col-mtime">{{ formatDate(node.mtime) }}</span>
+					<span class="dm-tree__col-mtime" @mouseenter="titleIfTruncated">{{ formatDate(node.mtime) }}</span>
 				</div>
 			</div>
 		</template>
@@ -192,7 +190,6 @@ export default {
 					composition: data.root.composition ?? null,
 					kind: null,
 					depth: 0,
-					parentSize: null,
 					// Never collapsible — it's the scope root, always visible,
 					// same idea as a fixed "C:\" row.
 					hasArrow: false,
@@ -264,7 +261,7 @@ export default {
 		// Treemap.vue's __others__ bucket, computed per level here instead of
 		// once for the whole scope).
 		childNodes(items, truncated, parentNode) {
-			const nodes = items.map((item) => this.makeNode(item, parentNode.depth + 1, parentNode.navPath, parentNode.size))
+			const nodes = items.map((item) => this.makeNode(item, parentNode.depth + 1, parentNode.navPath))
 			if (truncated) {
 				const accountedFor = items.reduce((sum, item) => sum + Math.max(0, item.size), 0)
 				const remainder = parentNode.size - accountedFor
@@ -277,7 +274,6 @@ export default {
 						type: OTHERS_TYPE,
 						fileCount: null,
 						depth: parentNode.depth + 1,
-						parentSize: parentNode.size,
 						hasArrow: false,
 						expanded: false,
 						loadingChildren: false,
@@ -286,7 +282,7 @@ export default {
 			}
 			return nodes
 		},
-		makeNode(item, depth, parentNavPath, parentSize) {
+		makeNode(item, depth, parentNavPath) {
 			const navPath = parentNavPath === '' ? item.name : `${parentNavPath}/${item.name}`
 			return {
 				name: item.name,
@@ -311,17 +307,24 @@ export default {
 				// ('user' | 'teamfolder' | 'external') — null everywhere else.
 				kind: item.kind ?? null,
 				depth,
-				parentSize,
 				hasArrow: item.type === 'folder' && item.size > 0,
 				expanded: false,
 				loadingChildren: false,
 			}
 		},
-		pct(node) {
-			if (node.parentSize === null || node.parentSize === undefined || node.parentSize <= 0) {
-				return 100
+		// Native tooltip, but only where it earns its keep: a cell whose text
+		// actually overflows its column. Bound on mouseenter rather than
+		// rendered as a static :title so untruncated rows — the majority —
+		// don't sprout a tooltip that merely repeats what is already fully
+		// visible. Measuring here also means it stays correct when the column
+		// is resized or the window changes, with no resize listener.
+		titleIfTruncated(event) {
+			const el = event.currentTarget
+			if (el.scrollWidth > el.clientWidth + 1) {
+				el.setAttribute('title', el.textContent.trim())
+			} else {
+				el.removeAttribute('title')
 			}
-			return (Math.max(0, node.size) / node.parentSize) * 100
 		},
 		// The "Composição" stacked bar: for a folder, node.composition (a
 		// backend-computed {mimetype: size} map recursive over every
@@ -486,7 +489,11 @@ export default {
 .dm-tree__header-row,
 .dm-tree__row {
 	display: grid;
-	grid-template-columns: minmax(220px, 1fr) 120px 55px 90px 90px 160px;
+	/* The "% of parent" column (55px) was dropped as redundant — the
+	   composition bar beside it already sums to the whole row — and its
+	   width folded back into the name column, which is the one that
+	   actually runs out of room once a deep tree indents it. */
+	grid-template-columns: minmax(275px, 1fr) 120px 90px 90px 160px;
 	align-items: center;
 	gap: 6px;
 	font-size: 12.5px;
@@ -524,7 +531,18 @@ export default {
 }
 
 .dm-tree__row--selected {
+	/* A tinted fill plus an inset left accent, rather than the fill alone:
+	   on a long row the fill is easy to lose track of while scanning, and
+	   the accent gives the eye a fixed left-edge anchor. box-shadow rather
+	   than a real border so the row's box model — and therefore the row
+	   height and column alignment — is untouched. Theme variables, not a
+	   fixed light-mode tint, since the app renders in both themes. */
 	background: var(--color-primary-element-light);
+	box-shadow: inset 3px 0 0 var(--color-primary-element);
+}
+
+.dm-tree__row--selected:hover {
+	background: var(--color-primary-element-light-hover, var(--color-primary-element-light));
 }
 
 .dm-tree__col-name {
@@ -622,7 +640,11 @@ export default {
 .dm-tree__comp-track {
 	display: flex;
 	width: 100%;
-	height: 8px;
+	/* 10px, up from 8px: the thin segments of a mixed folder were the ones
+	   that suffered. Still well under the row's own content height (a
+	   12.5px-font row), so rows do not grow and the tree shows the same
+	   number of items per screen as before. */
+	height: 10px;
 	background: var(--color-background-darker);
 	border-radius: 3px;
 	overflow: hidden;
@@ -631,12 +653,6 @@ export default {
 .dm-tree__comp-seg {
 	display: block;
 	height: 100%;
-}
-
-.dm-tree__col-pct {
-	color: var(--color-text-maxcontrast);
-	font-size: 0.85em;
-	text-align: right;
 }
 
 .dm-tree__col-size,

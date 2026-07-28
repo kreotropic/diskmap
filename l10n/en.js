@@ -29,7 +29,6 @@ OC.L10N.register(
     "Other" : "Other",
     "Other small files ({count})" : "Other small files ({count})",
     "Composition" : "Composition",
-    "% of parent" : "% of parent",
     "File count" : "File count",
     "Last modified" : "Last modified",
     "More items not shown" : "More items not shown",

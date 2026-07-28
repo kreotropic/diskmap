@@ -1,8 +1,18 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="#fff">
-	<rect x="0" y="0" width="9" height="9" rx="2"/>
-	<rect x="10" y="0" width="6" height="5" rx="1.5"/>
-	<rect x="10" y="6" width="6" height="3" rx="1.5"/>
-	<rect x="0" y="10" width="4" height="6" rx="1.5"/>
-	<rect x="5" y="11" width="6" height="5" rx="1.5"/>
-	<rect x="12" y="10" width="4" height="6" rx="1.5"/>
+	<!--
+	  The glyph only, white on transparent — deliberately NOT the blue rounded
+	  square of the source artwork. This one file feeds two different
+	  renderers: the top bar draws it as a raw SVG over the dark header (where
+	  core's own icons, e.g. apps/files/img/app.svg, are plain fill="#fff"),
+	  while theming's IconBuilder composites it onto a rounded square of the
+	  instance's primary colour to produce the browser-tab favicon. Baking the
+	  square in here would put blue on blue in the favicon and drop a stray
+	  blue block into the top bar; leaving the centre of the ring open instead
+	  lets that generated background show through as the dot.
+
+	  Sized for the favicon path: IconBuilder pads the glyph by 15% a side, so
+	  the ring is drawn near full-bleed (r 6.9 of the 8-unit half-canvas) to
+	  land at roughly the artwork's proportions once scaled back down.
+	-->
+	<path fill-rule="evenodd" d="M1.1 8a6.9 6.9 0 1 0 13.8 0A6.9 6.9 0 1 0 1.1 8Zm4.6 0a2.3 2.3 0 1 0 4.6 0 2.3 2.3 0 1 0-4.6 0Z"/>
 </svg>

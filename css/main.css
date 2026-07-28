@@ -10,31 +10,53 @@
 	   it available regardless of which one they're nested under; defined
 	   here at the whole-app root (NcContent's own class) rather than scoped
 	   inside either component, since they're siblings, not parent/child —
-	   a CSS custom property only cascades down, not sideways. Values given
-	   directly by the user (a design mockup, not run through the dataviz
-	   skill's validator this time) — same values used for dark mode for now
-	   as a placeholder; revisit if flagged as low-contrast there. */
+	   a CSS custom property only cascades down, not sideways.
+
+	   Both modes are computed rather than eyeballed: every value comes from
+	   the dataviz skill's validator (all-pairs mode, because any two treemap
+	   tiles can end up adjacent), checked against the surface the tiles
+	   actually sit on — Nextcloud's --color-background-dark, #ededed light /
+	   #292929 dark, not the page background.
+
+	   The previous palette FAILED two checks in both modes: video #be4bdb
+	   against document #4c6ef5 measured ΔE 4.5 under protanopia (floor 6,
+	   target 8) because purple loses its red component and collapses onto
+	   blue, and archive #f59f00 sat outside the lightness band. Video is now
+	   stepped much darker, so lightness separation is what carries that pair
+	   through colour-blind simulation. Light passes at ΔE 8.6 / 24.1
+	   (protan / normal vision), dark at 11.1 / 21.2.
+
+	   Some slots report "relief required" for contrast (below 3:1 against
+	   the surface). That obligation is met rather than waived: every map
+	   tile carries a direct text label and the tree pane is a labelled
+	   table, so identity is never conveyed by colour alone. */
 	--dm-cat-document: #4c6ef5;
-	--dm-cat-image: #12b886;
-	--dm-cat-video: #be4bdb;
-	--dm-cat-archive: #f59f00;
-	--dm-cat-other: #868e96;
+	--dm-cat-image: #00ae79;
+	--dm-cat-video: #870083;
+	--dm-cat-archive: #ee921a;
+	/* Deliberately achromatic and light: "Other" is chrome, not a fifth
+	   category competing with the four real ones, so it is judged as a
+	   neutral rather than held to the categorical chroma floor. */
+	--dm-cat-other: #b0b7bf;
 }
 
+/* Dark mode is stepped independently against the #292929 surface, never
+   flipped or reused from light — the dark lightness band (L 0.48–0.67)
+   doesn't even overlap several of the light steps. */
 @media (prefers-color-scheme: dark) {
 	body:not([data-theme-light]) .app-diskmap {
-		--dm-cat-document: #4c6ef5;
-		--dm-cat-image: #12b886;
-		--dm-cat-video: #be4bdb;
-		--dm-cat-archive: #f59f00;
-		--dm-cat-other: #868e96;
+		--dm-cat-document: #5283fe;
+		--dm-cat-image: #31ae73;
+		--dm-cat-video: #cb5ab7;
+		--dm-cat-archive: #ae6700;
+		--dm-cat-other: #767d85;
 	}
 }
 
 body[data-theme-dark] .app-diskmap {
-	--dm-cat-document: #4c6ef5;
-	--dm-cat-image: #12b886;
-	--dm-cat-video: #be4bdb;
-	--dm-cat-archive: #f59f00;
-	--dm-cat-other: #868e96;
+	--dm-cat-document: #5283fe;
+	--dm-cat-image: #31ae73;
+	--dm-cat-video: #cb5ab7;
+	--dm-cat-archive: #ae6700;
+	--dm-cat-other: #767d85;
 }

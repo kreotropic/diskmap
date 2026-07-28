@@ -19,14 +19,32 @@
 				preserveAspectRatio="none"
 				role="img"
 				:aria-label="t('diskmap', 'Storage treemap')">
-				<g v-for="node in layoutNodes" :key="keyFor(node)">
+				<defs>
+					<!-- One gradient definition reused by every tile: in the default
+						 objectBoundingBox units it re-maps to each rect's own box, so
+						 every block gets its own light-to-dark sheen rather than one
+						 gradient stretched across the whole canvas. The vector is CSS's
+						 165deg: a CSS angle runs along (sin, -cos), which at 165 is
+						 (0.26, 0.97) — top-left toward bottom-right, steeply. -->
+					<linearGradient id="dm-tile-sheen" x1="0" y1="0" x2="0.26" y2="0.97">
+						<stop offset="0" stop-color="#fff" stop-opacity="0.16" />
+						<stop offset="1" stop-color="#000" stop-opacity="0.1" />
+					</linearGradient>
+				</defs>
+				<!-- Opacity sits on the group rather than on the fill rect so the
+					 sheen dims in step with the tile beneath it whenever the category
+					 filter or a folder highlight is active. -->
+				<g
+					v-for="node in layoutNodes"
+					:key="keyFor(node)"
+					class="dm-treemap__tile"
+					:opacity="rectOpacity(node)">
 					<rect
 						:x="node.x0"
 						:y="node.y0"
-						:width="Math.max(0, node.x1 - node.x0 - 1)"
-						:height="Math.max(0, node.y1 - node.y0 - 1)"
+						:width="tileWidth(node)"
+						:height="tileHeight(node)"
 						:fill="colorFor(node.data)"
-						:opacity="rectOpacity(node)"
 						class="dm-treemap__rect"
 						:class="{
 							'dm-treemap__rect--clickable': isClickable(node.data),
@@ -41,6 +59,18 @@
 						@pointerleave="hideTooltip"
 						@focus="showTooltip(node, $event)"
 						@blur="hideTooltip" />
+					<!-- Skipped on tiles too small to shade, where it would only
+						 muddy an already tiny patch of colour. pointer-events="none"
+						 leaves every interaction on the fill rect underneath. -->
+					<rect
+						v-if="tileWidth(node) > 3 && tileHeight(node) > 3"
+						:x="node.x0"
+						:y="node.y0"
+						:width="tileWidth(node)"
+						:height="tileHeight(node)"
+						class="dm-treemap__sheen"
+						fill="url(#dm-tile-sheen)"
+						pointer-events="none" />
 					<text
 						v-if="labelFits(node)"
 						:x="node.x0 + 4"
@@ -277,7 +307,10 @@ export default {
 			// tiles rather than reaching individual files) — it needs to be
 			// clickable too, not just files, or most of what's actually on
 			// screen would be dead space with no map↔tree sync at all.
-			return data.type === 'file' || data.type === 'folder'
+			// The fold-in bucket is clickable as well: it has no path of its
+			// own, but its containing folder does, and that folder's tree row
+			// lists every file folded in here individually (see activate()).
+			return data.type === 'file' || data.type === 'folder' || data.type === OTHERS_TYPE
 		},
 		// A single click both selects (visual feedback in the map itself)
 		// and tells the folder tree above to expand down to and highlight
@@ -289,7 +322,18 @@ export default {
 			}
 			this.selectedKey = this.keyFor(node)
 			this.highlightedFolderPath = null
-			this.$emit('reveal-path', this.pathFor(node))
+			// The fold-in bucket is synthetic — it stands for many files at
+			// once and has no path to reveal. Its parent folder does, and the
+			// tree lists that folder's children individually (the tree is not
+			// node-budgeted the way the map is), so this is where the files
+			// folded in here can actually be read one by one. Expanding the
+			// bucket in place is not possible: on the whole-server view it can
+			// even span several different accounts.
+			const target = node.data.type === OTHERS_TYPE ? node.parent : node
+			if (!target) {
+				return
+			}
+			this.$emit('reveal-path', this.pathFor(target))
 		},
 		// Called by the parent view (via $refs) when a row is clicked in
 		// FolderTree.vue — the tree→map half of the sync. A folder highlights
@@ -303,6 +347,15 @@ export default {
 				this.selectedKey = null
 				this.highlightedFolderPath = path
 			}
+		},
+		// The 1px taken off each tile is the seam between neighbours. Shared by
+		// the fill rect and the sheen laid over it so the two can never drift
+		// apart and leave a bright or dark fringe along an edge.
+		tileWidth(node) {
+			return Math.max(0, node.x1 - node.x0 - 1)
+		},
+		tileHeight(node) {
+			return Math.max(0, node.y1 - node.y0 - 1)
 		},
 		labelFits(node) {
 			return (node.x1 - node.x0) > 40 && (node.y1 - node.y0) > 18
@@ -382,11 +435,33 @@ export default {
 	transition: opacity 0.15s;
 }
 
+/* Each tile is a group: the flat category fill, then a gradient sheen over
+   it. Isolating the group keeps that sheen blending against its own tile
+   rather than against whatever the canvas shows through the seams — without
+   this, blend containment would only happen by accident, whenever the group
+   already had opacity below 1. */
+.dm-treemap__tile {
+	isolation: isolate;
+}
+
 .dm-treemap__rect {
 	/* A translucent white seam (not a theme color) so adjacent same-hue
 	   tiles (several small blue "item-…" files side by side) stay visually
 	   separated regardless of light/dark mode. */
-	stroke: rgba(255, 255, 255, 0.15);
+	stroke: rgba(255, 255, 255, 0.55);
+	stroke-width: 1px;
+}
+
+/* The depth pass: a single shared gradient (see the <defs> in the template)
+   laid over the flat fill, blended rather than simply painted on, so it
+   shades the category colour instead of washing it toward grey. Deliberately
+   square-cornered like the fill beneath it — rounding individual tiles would
+   eat area at the corners and make small blocks read as smaller than the
+   number they stand for, which is the one thing a treemap must get right.
+   Only the canvas as a whole is rounded. */
+.dm-treemap__sheen {
+	mix-blend-mode: overlay;
+	stroke: rgba(0, 0, 0, 0.05);
 	stroke-width: 1px;
 }
 
