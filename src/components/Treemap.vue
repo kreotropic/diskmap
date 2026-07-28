@@ -31,14 +31,16 @@
 						<stop offset="1" stop-color="#000" stop-opacity="0.1" />
 					</linearGradient>
 				</defs>
-				<!-- Opacity sits on the group rather than on the fill rect so the
-					 sheen dims in step with the tile beneath it whenever the category
-					 filter or a folder highlight is active. -->
+				<!-- Dimming is applied to the group, not the fill rect, so the
+					 sheen fades in step with the tile beneath it whenever the
+					 category filter or a folder highlight is active — and as a
+					 class rather than an opacity attribute, so how far a
+					 de-emphasised tile fades can differ per theme. -->
 				<g
 					v-for="node in layoutNodes"
 					:key="keyFor(node)"
 					class="dm-treemap__tile"
-					:opacity="rectOpacity(node)">
+					:class="dimClass(node)">
 					<rect
 						:x="node.x0"
 						:y="node.y0"
@@ -282,14 +284,19 @@ export default {
 		colorFor(data) {
 			return `var(--dm-cat-${this.categoryFor(data)})`
 		},
-		rectOpacity(node) {
+		// Which dimming applies, as a class rather than a computed number:
+		// how far a de-emphasised tile should fade is a per-theme decision
+		// (the same opacity that reads as "pushed back" on a dark canvas
+		// washes out to near-invisible pastel on a light one), and the theme
+		// is something CSS already knows and this component does not.
+		dimClass(node) {
 			if (this.highlightedFolderPath !== null) {
-				return this.isInHighlightedFolder(node) ? 1 : 0.15
+				return this.isInHighlightedFolder(node) ? null : 'dm-treemap__tile--dim-focus'
 			}
 			if (!this.activeCategory) {
-				return 1
+				return null
 			}
-			return this.categoryFor(node.data) === this.activeCategory ? 1 : 0.25
+			return this.categoryFor(node.data) === this.activeCategory ? null : 'dm-treemap__tile--dim-category'
 		},
 		isInHighlightedFolder(node) {
 			let cur = node
@@ -442,6 +449,19 @@ export default {
    already had opacity below 1. */
 .dm-treemap__tile {
 	isolation: isolate;
+}
+
+/* Two strengths of de-emphasis, both theme-dependent (values live in
+   css/main.css next to the palette): --dm-dim-focus for "this folder's
+   region is what matters", the stronger of the two, and --dm-dim-category
+   for the legend filter, which stays gentler because it is a filter rather
+   than a spotlight. */
+.dm-treemap__tile--dim-focus {
+	opacity: var(--dm-dim-focus);
+}
+
+.dm-treemap__tile--dim-category {
+	opacity: var(--dm-dim-category);
 }
 
 .dm-treemap__rect {

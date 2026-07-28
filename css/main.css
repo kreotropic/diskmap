@@ -38,6 +38,18 @@
 	   category competing with the four real ones, so it is judged as a
 	   neutral rather than held to the categorical chroma floor. */
 	--dm-cat-other: #b0b7bf;
+
+	/* How far a de-emphasised treemap tile fades, applied to the whole tile
+	   group by Treemap.vue. Deliberately per-theme rather than one constant:
+	   the same opacity behaves very differently over a light canvas, where a
+	   faded tile washes toward the near-white background and becomes an
+	   illegible pastel, than over a dark one, where fading reads cleanly as
+	   receding. The light values are therefore roughly double the dark ones —
+	   still plainly secondary, but the dimmed content stays readable.
+	   --dm-dim-focus is the stronger spotlight used when one folder's region
+	   is selected; --dm-dim-category is the gentler legend filter. */
+	--dm-dim-focus: 0.3;
+	--dm-dim-category: 0.4;
 }
 
 /* Dark mode is stepped independently against the #292929 surface, never
@@ -50,6 +62,11 @@
 		--dm-cat-video: #cb5ab7;
 		--dm-cat-archive: #ae6700;
 		--dm-cat-other: #767d85;
+		/* Left where this app shipped them: over a dark canvas these already
+		   read as receding rather than washed out, which is exactly what the
+		   light values above have to be raised to achieve. */
+		--dm-dim-focus: 0.15;
+		--dm-dim-category: 0.25;
 	}
 }
 
@@ -59,4 +76,6 @@ body[data-theme-dark] .app-diskmap {
 	--dm-cat-video: #cb5ab7;
 	--dm-cat-archive: #ae6700;
 	--dm-cat-other: #767d85;
+	--dm-dim-focus: 0.15;
+	--dm-dim-category: 0.25;
 }
