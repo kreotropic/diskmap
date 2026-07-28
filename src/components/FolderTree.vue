@@ -130,6 +130,14 @@ export default {
 			// clicked last (confirmed live: rapid clicks landed on an earlier
 			// click's file, not the most recent one).
 			revealToken: 0,
+			// The same staleness guard revealToken provides for reveals, for
+			// the tree itself: loadRoot() replaces flatTree wholesale, so any
+			// expand() still awaiting its own response when the scope changes
+			// would splice children of the OLD tree into the NEW one — and
+			// since its node is no longer in flatTree, indexOf() returns -1
+			// and splice(0, 0, …) puts them at the very top. Bumped by every
+			// loadRoot(), checked after each await before touching state.
+			loadToken: 0,
 			// Drives the global "Opening…" indicator — see its template
 			// comment for why the per-row spinner alone isn't enough.
 			revealing: false,
@@ -152,11 +160,19 @@ export default {
 		formatDate,
 		formatCount,
 		async loadRoot() {
+			const token = ++this.loadToken
+			// Any reveal still walking the tree we're about to discard is
+			// now meaningless — retire it along with the tree.
+			this.revealToken++
+			this.revealing = false
 			this.loadingRoot = true
 			this.error = false
 			this.selectedNavPath = null
 			try {
 				const data = await fetchChildren(this.scope, this.identifier, { path: '', limit: CHILD_LIMIT })
+				if (token !== this.loadToken) {
+					return
+				}
 				if (!data.root) {
 					this.flatTree = []
 					return
@@ -186,9 +202,15 @@ export default {
 				const children = this.childNodes(data.items, data.truncated, root)
 				this.flatTree = [root, ...children]
 			} catch (e) {
-				this.error = true
+				if (token === this.loadToken) {
+					this.error = true
+				}
 			} finally {
-				this.loadingRoot = false
+				// A superseded load must not clear the spinner out from under
+				// whichever newer load is still running.
+				if (token === this.loadToken) {
+					this.loadingRoot = false
+				}
 			}
 		},
 		async toggle(node) {
@@ -202,11 +224,20 @@ export default {
 			if (node.loadingChildren || node.expanded) {
 				return
 			}
+			const token = this.loadToken
 			node.loadingChildren = true
 			try {
 				const data = await fetchChildren(this.scope, this.identifier, { path: node.navPath, limit: CHILD_LIMIT })
-				const children = this.childNodes(data.items, data.truncated, node)
 				const idx = this.flatTree.indexOf(node)
+				// The tree was reloaded under us (scope/identifier changed),
+				// or this node was collapsed away while the request was in
+				// flight — either way it no longer belongs to the tree on
+				// screen, and splicing at indexOf()'s -1 would graft these
+				// children onto the top of it.
+				if (token !== this.loadToken || idx === -1) {
+					return
+				}
+				const children = this.childNodes(data.items, data.truncated, node)
 				this.flatTree.splice(idx + 1, 0, ...children)
 				node.expanded = true
 			} catch (e) {

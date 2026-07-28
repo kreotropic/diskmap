@@ -43,10 +43,27 @@ class LayoutDetector {
     /** @var int[]|null */
     private ?array $legacyRootStorageCandidatesCache = null;
 
+    /** @var array<int, ResolvedTeamFolderStorage> */
+    private array $resolveCache = [];
+
     public function __construct(private IDBConnection $db) {
     }
 
+    /**
+     * Cached per request on the same grounds as
+     * legacyRootStorageCandidates(): a single instance-scope request resolves
+     * the same folder several times over (the team-folder listing, the
+     * trash/versions totals and each browse of the folder itself all ask),
+     * and every resolution costs at least one query.
+     */
     public function resolve(int $folderId): ResolvedTeamFolderStorage {
+        if (isset($this->resolveCache[$folderId])) {
+            return $this->resolveCache[$folderId];
+        }
+        return $this->resolveCache[$folderId] = $this->resolveUncached($folderId);
+    }
+
+    private function resolveUncached(int $folderId): ResolvedTeamFolderStorage {
         $separateStorageId = $this->findSeparateStorageId($folderId);
         if ($separateStorageId !== null) {
             return new ResolvedTeamFolderStorage(
@@ -79,6 +96,15 @@ class LayoutDetector {
      * "__groupfolders/{id}/". This can't collide between folder ids (e.g.
      * folder 1 vs. folder 11) because the pattern requires a "/" immediately
      * after the numeric id.
+     *
+     * It *can*, however, match more than one storage for the same folder id,
+     * for exactly the reason findLegacyRootStorageId() documents below: an
+     * instance that has changed its data directory keeps the old, orphaned
+     * "local::/old/path/__groupfolders/{id}/" storage alongside the live one,
+     * and an unqualified LIMIT 1 has no ordering guarantee over which it
+     * returns — picking the stale one silently reports the folder as empty.
+     * So the ambiguity is resolved the same way: whichever candidate actually
+     * holds the folder's "files" row is the live one.
      */
     private function findSeparateStorageId(int $folderId): ?int {
         $qb = $this->db->getQueryBuilder();
@@ -88,13 +114,34 @@ class LayoutDetector {
                 'id',
                 $qb->createNamedParameter('%__groupfolders/' . $folderId . '/%'),
             ))
-            ->setMaxResults(1);
+            // Newest first: a storage created after a data-directory change
+            // outranks the one left behind, so even the fallback below is
+            // deterministic rather than whatever order the table returns.
+            ->orderBy('numeric_id', 'DESC');
 
         $result = $qb->executeQuery();
-        $row = $result->fetch();
+        $candidates = [];
+        while ($row = $result->fetch()) {
+            $candidates[] = (int)$row['numeric_id'];
+        }
         $result->closeCursor();
 
-        return $row ? (int)$row['numeric_id'] : null;
+        // The overwhelmingly common case — one storage, no ambiguity to
+        // resolve and no extra query to pay for.
+        if (count($candidates) <= 1) {
+            return $candidates[0] ?? null;
+        }
+
+        foreach ($candidates as $storageId) {
+            if ($this->hasPathRow($storageId, 'files')) {
+                return $storageId;
+            }
+        }
+
+        // A folder created but never written to has no "files" row on any
+        // candidate yet — still resolve it (to the newest) rather than
+        // reporting it as having no storage at all.
+        return $candidates[0];
     }
 
     /**
@@ -114,22 +161,31 @@ class LayoutDetector {
      */
     private function findLegacyRootStorageId(int $folderId): ?int {
         foreach ($this->legacyRootStorageCandidates() as $storageId) {
-            $qb = $this->db->getQueryBuilder();
-            $qb->select('fileid')
-                ->from('filecache')
-                ->where($qb->expr()->eq('storage', $qb->createNamedParameter($storageId, IQueryBuilder::PARAM_INT)))
-                ->andWhere($qb->expr()->eq('path', $qb->createNamedParameter('__groupfolders/' . $folderId)))
-                ->setMaxResults(1);
-
-            $result = $qb->executeQuery();
-            $row = $result->fetch();
-            $result->closeCursor();
-
-            if ($row) {
+            if ($this->hasPathRow($storageId, '__groupfolders/' . $folderId)) {
                 return $storageId;
             }
         }
         return null;
+    }
+
+    /**
+     * Whether a storage carries a filecache row at exactly this path — the
+     * probe both ambiguity resolutions above are built on. An exact
+     * (storage, path) match, so it rides the fs_storage_path_prefix index.
+     */
+    private function hasPathRow(int $storageId, string $path): bool {
+        $qb = $this->db->getQueryBuilder();
+        $qb->select('fileid')
+            ->from('filecache')
+            ->where($qb->expr()->eq('storage', $qb->createNamedParameter($storageId, IQueryBuilder::PARAM_INT)))
+            ->andWhere($qb->expr()->eq('path', $qb->createNamedParameter($path)))
+            ->setMaxResults(1);
+
+        $result = $qb->executeQuery();
+        $row = $result->fetch();
+        $result->closeCursor();
+
+        return $row !== false && $row !== null;
     }
 
     /**

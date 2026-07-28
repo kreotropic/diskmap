@@ -9,21 +9,25 @@
     <name>DiskMap</name>
     <summary>See where your storage is going — treemap and top consumers, instance-wide</summary>
     <description><![CDATA[
-DiskMap shows where storage is going across your Nextcloud instance — per user, per team folder
-and per group — without scanning anything.
+DiskMap shows where storage is going across your Nextcloud instance — per user and per team
+folder — without scanning anything.
 
 Nextcloud already tracks aggregated folder sizes in its file cache, updated on every operation.
 DiskMap is a visualizer over data that already exists: it never triggers a filesystem scan.
 
+Each view pairs a WinDirStat-style treemap with an expandable folder tree, kept in sync both
+ways: click a tile on the map and the tree opens to that file, click a row in the tree and the
+map highlights its region.
+
 **For administrators:**
+- Whole-server view: every account, team folder and external storage as a top-level entry,
+  browsable down to individual files.
 - Team folders overview: used space, quota and occupancy, with a files / trash / versions
   breakdown for each folder.
-- Top largest files across the instance or within any scope.
-- Group view with used-space attribution, reconciled against overlaps (a folder shared by
-  several groups is shown as such, not silently divided).
 
 **For every user:**
-- The same treemap and top-consumers view, scoped strictly to files you can access.
+- The same treemap and folder tree over your own storage, with quota occupancy and a
+  files / trash / versions breakdown.
 
 All figures show the timestamp of the underlying file cache entry, so it's always clear this
 reflects what Nextcloud's cache knows, not a live disk read.
@@ -40,6 +44,12 @@ reflects what Nextcloud's cache knows, not a live disk read.
 
     <dependencies>
         <php min-version="8.1"/>
+        <!-- The aggregation queries are MySQL/MariaDB-specific (a USE INDEX
+             hint and backtick-quoted identifiers in the composition query),
+             and the app has no PostgreSQL/SQLite coverage. Declaring it keeps
+             the app off instances where every view would 500 rather than
+             letting it install and fail at runtime. -->
+        <database>mysql</database>
         <nextcloud min-version="32" max-version="33"/>
     </dependencies>
 

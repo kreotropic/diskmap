@@ -80,11 +80,15 @@ class TeamFolderService {
         return $result;
     }
 
+    /**
+     * Clamped at 0 for the same reason UserStorageService::sizeFor() is: a
+     * filecache size of -1 means "not yet calculated", not "negative space".
+     */
     private function sizeFor(?int $storageId, string $path): int {
         if ($storageId === null) {
             return 0;
         }
-        return $this->usageSource->totalSize(Scope::forStorage($storageId, $path)) ?? 0;
+        return max(0, $this->usageSource->totalSize(Scope::forStorage($storageId, $path)) ?? 0);
     }
 
     /**

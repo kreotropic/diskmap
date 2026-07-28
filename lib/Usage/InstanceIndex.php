@@ -28,6 +28,10 @@ use OCP\IUserManager;
  * UserHomeResolver/TeamFolderService. Pure reads only.
  */
 class InstanceIndex {
+
+    /** @var InstanceTopLevelEntry[]|null */
+    private ?array $listAllCache = null;
+
     public function __construct(
         private IDBConnection $db,
         private LayoutDetector $layoutDetector,
@@ -36,12 +40,80 @@ class InstanceIndex {
     ) {
     }
 
-    /** @return InstanceTopLevelEntry[] */
+    /**
+     * Cached per request: a single instance-scope request calls this several
+     * times over (totals() and lastUpdated() each want the full list, and
+     * every deeper tree/map navigation re-resolves its delegate through it),
+     * and rebuilding it costs a bulk user query plus a query per team folder
+     * every time. The underlying data can't change mid-request — this app
+     * only ever reads — so the same caching assumption LayoutDetector already
+     * makes for its own lookups holds here.
+     *
+     * @return InstanceTopLevelEntry[]
+     */
     public function listAll(): array {
+        if ($this->listAllCache !== null) {
+            return $this->listAllCache;
+        }
+
         $teamFolders = $this->listTeamFolders();
         $teamFolderStorageIds = array_map(static fn (InstanceTopLevelEntry $e) => $e->storageId, $teamFolders);
+        $entries = [...$this->listUsers(), ...$teamFolders, ...$this->listExternalStorages($teamFolderStorageIds)];
 
-        return [...$this->listUsers(), ...$teamFolders, ...$this->listExternalStorages($teamFolderStorageIds)];
+        return $this->listAllCache = $this->disambiguateNames($entries);
+    }
+
+    /**
+     * A top-level entry's name doubles as its path segment — FolderTree's
+     * navPath, Treemap's pathFor() and FilecacheUsageSource's delegate
+     * resolution all key off it — so two entries sharing a name (a uid equal
+     * to a team folder's mount point, say, or two external storages whose
+     * ids differ only in their backend prefix) leave one of them permanently
+     * unreachable: the delegate lookup always resolves to whichever came
+     * first, and the tree renders duplicate keys. Rare, but it fails
+     * silently, so suffix the later duplicates with their kind to keep every
+     * entry addressable.
+     *
+     * displayName follows the same suffix only when it would otherwise start
+     * disagreeing with name — the tree shows a separate "raw uid" chip
+     * whenever the two differ, and a name that never differed before
+     * shouldn't grow one now.
+     *
+     * @param InstanceTopLevelEntry[] $entries
+     * @return InstanceTopLevelEntry[]
+     */
+    private function disambiguateNames(array $entries): array {
+        $seen = [];
+        $result = [];
+
+        foreach ($entries as $entry) {
+            if (!isset($seen[$entry->name])) {
+                $seen[$entry->name] = true;
+                $result[] = $entry;
+                continue;
+            }
+
+            $candidate = $entry->name . ' (' . $entry->kind . ')';
+            $suffix = 2;
+            while (isset($seen[$candidate])) {
+                $candidate = $entry->name . ' (' . $entry->kind . ' ' . $suffix . ')';
+                $suffix++;
+            }
+            $seen[$candidate] = true;
+
+            $result[] = new InstanceTopLevelEntry(
+                name: $candidate,
+                displayName: $entry->displayName === $entry->name ? $candidate : $entry->displayName,
+                kind: $entry->kind,
+                storageId: $entry->storageId,
+                path: $entry->path,
+                fileid: $entry->fileid,
+                size: $entry->size,
+                mtime: $entry->mtime,
+            );
+        }
+
+        return $result;
     }
 
     /**
@@ -263,20 +335,43 @@ class InstanceIndex {
                 $qb->expr()->eq('f.path', $qb->createNamedParameter('')),
             ))
             ->where($qb->expr()->notLike('s.id', $qb->createNamedParameter('home::%')))
-            ->andWhere($qb->expr()->notLike('s.id', $qb->createNamedParameter('object::user:%')));
+            ->andWhere($qb->expr()->notLike('s.id', $qb->createNamedParameter('object::user:%')))
+            // The primary object store's own bucket, the object-storage
+            // counterpart of the local data directory excluded below: it
+            // holds appdata and other instance-internal content, never a
+            // configured external mount. Excluding it keeps an
+            // object-storage instance consistent with a local one, which has
+            // never listed its data root here either. (A files_external S3
+            // mount is unaffected — those get a backend-specific storage id
+            // like "amazon::<bucket>", not this prefix.)
+            ->andWhere($qb->expr()->notLike('s.id', $qb->createNamedParameter('object::store:%')));
 
         $result = $qb->executeQuery();
-        $entries = [];
-        while ($row = $result->fetch()) {
-            $storageKey = (string)$row['id'];
+        $rows = $result->fetchAll();
+        $result->closeCursor();
+
+        $candidates = [];
+        foreach ($rows as $row) {
             $numericId = (int)$row['numeric_id'];
-            if ($storageKey === $dataDirStorageKey || in_array($numericId, $excludeStorageIds, true)) {
+            if ((string)$row['id'] === $dataDirStorageKey || in_array($numericId, $excludeStorageIds, true)) {
+                continue;
+            }
+            $candidates[$numericId] = (string)$row['id'];
+        }
+
+        $dataRoots = $this->dataRootStorageIds(array_keys($candidates));
+
+        $entries = [];
+        foreach ($rows as $row) {
+            $numericId = (int)$row['numeric_id'];
+            if (!isset($candidates[$numericId]) || in_array($numericId, $dataRoots, true)) {
                 continue;
             }
 
+            $displayName = $this->externalDisplayName($candidates[$numericId]);
             $entries[] = new InstanceTopLevelEntry(
-                name: $this->externalDisplayName($storageKey),
-                displayName: $this->externalDisplayName($storageKey),
+                name: $displayName,
+                displayName: $displayName,
                 kind: 'external',
                 storageId: $numericId,
                 path: '',
@@ -285,22 +380,69 @@ class InstanceIndex {
                 mtime: $row['mtime'] !== null ? (int)$row['mtime'] : null,
             );
         }
-        $result->closeCursor();
 
         return $entries;
     }
 
     /**
-     * IUserManager::get() has no true bulk form, but listUsers() already
-     * calls this once per uid it found (not per row anywhere else), so the
-     * cost is bounded by the account count, same tradeoff
-     * share_audit_dashboard's DisplayNameResolver already accepts in this
-     * exact production environment. Falls back to the uid itself if the
-     * account can't be resolved (deleted between the filecache read and now,
-     * or a backend hiccup) — never leaves the UI with an empty label.
+     * Which of $storageIds host a Nextcloud data root, identified by the
+     * "appdata_<instanceid>" folder every instance keeps at the top of one.
+     *
+     * The *current* data directory is already excluded by its exact storage
+     * id, but an instance that has moved its data directory leaves the old
+     * root behind as a still-cached local:: storage holding a stale copy of
+     * every user's home — listing that as an external storage would
+     * double-count the entire instance in the header totals and the map.
+     * Matching the marker folder catches it without having to know what the
+     * old path was, and it's one indexed (storage, path) lookup over the
+     * handful of storages that got this far, not a scan.
+     *
+     * @param int[] $storageIds
+     * @return int[]
+     */
+    private function dataRootStorageIds(array $storageIds): array {
+        if (empty($storageIds)) {
+            return [];
+        }
+
+        $qb = $this->db->getQueryBuilder();
+        $qb->selectDistinct('storage')
+            ->from('filecache')
+            ->where($qb->expr()->in(
+                'storage',
+                $qb->createNamedParameter($storageIds, IQueryBuilder::PARAM_INT_ARRAY),
+            ))
+            ->andWhere($qb->expr()->eq(
+                'path',
+                $qb->createNamedParameter('appdata_' . $this->config->getSystemValueString('instanceid')),
+            ));
+
+        $result = $qb->executeQuery();
+        $ids = [];
+        while ($row = $result->fetch()) {
+            $ids[] = (int)$row['storage'];
+        }
+        $result->closeCursor();
+
+        return $ids;
+    }
+
+    /**
+     * IUserManager has no bulk display-name form, and listUsers() needs one
+     * per account it found — so on a large instance this, not the usage
+     * queries, is what the whole-server view's cost scales with. Measured
+     * cold on the dev instance: 53 of the 61 queries a whole-server tree load
+     * issued were this lookup.
+     *
+     * getDisplayName() rather than get()?->getDisplayName(): it reads through
+     * core's DisplayNameCache (memory + distributed cache, so Redis on any
+     * instance configured for it) instead of constructing a full IUser and
+     * hitting the account backend for each uid. Falls back to the uid itself
+     * when the account can't be resolved (deleted between the filecache read
+     * and now, or a backend hiccup) — never leaves the UI with an empty label.
      */
     private function displayNameForUid(string $uid): string {
-        return $this->userManager->get($uid)?->getDisplayName() ?: $uid;
+        return $this->userManager->getDisplayName($uid) ?: $uid;
     }
 
     /**

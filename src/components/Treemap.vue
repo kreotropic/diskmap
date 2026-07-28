@@ -105,6 +105,13 @@ export default {
 			// that isn't part of that folder's region instead of the usual
 			// per-category dimming.
 			highlightedFolderPath: null,
+			// Staleness guard for load(): the scope/identifier watchers can
+			// start a second fetch before the first resolves, and without a
+			// token whichever response lands LAST wins rather than whichever
+			// was asked for last — the map would then show a different scope
+			// than the tree beside it. Same pattern as FolderTree's
+			// loadToken/revealToken.
+			loadToken: 0,
 			canvasWidth: CANVAS_WIDTH,
 			canvasHeight: CANVAS_HEIGHT,
 		}
@@ -145,18 +152,28 @@ export default {
 		t,
 		formatBytes,
 		async load() {
+			const token = ++this.loadToken
 			this.loading = true
 			this.error = false
 			this.selectedKey = null
 			this.highlightedFolderPath = null
 			try {
 				const data = await fetchMap(this.scope, this.identifier)
+				if (token !== this.loadToken) {
+					return
+				}
 				this.root = data.root
 			} catch (e) {
-				this.error = true
+				if (token === this.loadToken) {
+					this.error = true
+				}
 			} finally {
-				this.loading = false
-				this.$nextTick(() => this.observeCanvasSize())
+				// Only the still-current load owns the spinner and the
+				// canvas observer; a superseded one must leave both alone.
+				if (token === this.loadToken) {
+					this.loading = false
+					this.$nextTick(() => this.observeCanvasSize())
+				}
 			}
 		},
 		// The SVG's logical coordinate system (canvasWidth/canvasHeight) is

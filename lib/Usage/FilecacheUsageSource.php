@@ -292,6 +292,23 @@ class FilecacheUsageSource implements IUsageSource {
                 }
             }
 
+            // The budget bounded the tree as a whole, but nothing bounded a
+            // single expansion: one folder with hundreds of big children
+            // could add all of them at once and overshoot maxNodes (confirmed
+            // live — a 200-node budget produced 202 tiles). Trim the smallest
+            // "big" children back into the fold-in bucket (they arrive size
+            // DESC from fetchChildRows(), so this drops exactly the least
+            // map-relevant ones) and the ceiling holds. One slot is reserved
+            // for the 'other' node the trimmed children now land in.
+            $maxBig = max(1, $budget);
+            if (count($big) > $maxBig) {
+                foreach (array_slice($big, $maxBig) as $dropped) {
+                    $bigSum -= max(0, $dropped['size']);
+                    $smallCount++;
+                }
+                $big = array_slice($big, 0, $maxBig);
+            }
+
             // Whatever isn't individually represented by a "big" child —
             // fetched-but-small files AND (if $truncated) whatever exists
             // beyond TREE_LEVEL_LIMIT that was never even fetched. Computed
@@ -458,9 +475,13 @@ class FilecacheUsageSource implements IUsageSource {
      * LIKE CONCAT(outer.path, '/%')` cannot get the fs_storage_path_prefix
      * range scan (the bound isn't a compile-time constant), while the exact
      * same pattern with a literal path does (`type: range`, confirmed at
-     * key_len 267 — the full (storage, path) prefix). USE INDEX pins that
-     * choice so the optimizer can't silently fall back to scanning every row
-     * for the storage.
+     * key_len 267 — the full (storage, path) prefix). USE INDEX biases the
+     * optimizer toward that plan but does NOT pin it: it is a hint, and a
+     * cost-based fallback to a full scan is still allowed (measured — the
+     * batched form in bulkComposition() drops to `type: ALL` on a small
+     * table even with the hint, and only FORCE INDEX would forbid that).
+     * Leaving it as a hint is deliberate: on a table small enough for the
+     * optimizer to prefer a scan, the scan really is cheaper.
      *
      * @return array{count: int, composition: array<string, int>} composition
      *     maps mimetype string ("image/png") to summed size — categorizing
@@ -476,6 +497,12 @@ class FilecacheUsageSource implements IUsageSource {
      *     mimetypeCategory.js's categoryForMimetype() knows to bucket as
      *     archive — everything else keeps its real mimetype untouched.
      */
+    private const COMPOSITION_MIMETYPE_CASE = "CASE
+                        WHEN m.mimetype = 'application/octet-stream' AND LOWER(f.name) LIKE '%.pst' THEN 'application/x-diskmap-pst'
+                        WHEN m.mimetype = 'application/octet-stream' AND LOWER(f.name) LIKE '%.dwg' THEN 'application/x-diskmap-dwg'
+                        ELSE m.mimetype
+                    END";
+
     private function recursiveComposition(int $storageId, string $path, int $size): array {
         // A folder's own aggregate size already tells us whether it has any
         // descendants at all — skip the query for an empty folder.
@@ -491,17 +518,12 @@ class FilecacheUsageSource implements IUsageSource {
         $likePattern = $path !== '' ? $this->db->escapeLikeParameter($path) . '/%' : '%';
         $folderMimetypeId = $this->folderMimetypeId();
 
-        $sql = "SELECT
-                    CASE
-                        WHEN m.mimetype = 'application/octet-stream' AND LOWER(f.name) LIKE '%.pst' THEN 'application/x-diskmap-pst'
-                        WHEN m.mimetype = 'application/octet-stream' AND LOWER(f.name) LIKE '%.dwg' THEN 'application/x-diskmap-dwg'
-                        ELSE m.mimetype
-                    END AS mimetype,
+        $sql = 'SELECT ' . self::COMPOSITION_MIMETYPE_CASE . ' AS mimetype,
                     COUNT(*) AS c, SUM(f.size) AS total
                 FROM `*PREFIX*filecache` f USE INDEX (fs_storage_path_prefix)
                 LEFT JOIN `*PREFIX*mimetypes` m ON f.mimetype = m.id
                 WHERE f.storage = ? AND f.path LIKE ? AND f.mimetype != ?
-                GROUP BY mimetype";
+                GROUP BY mimetype';
         $result = $this->db->executeQuery($sql, [$storageId, $likePattern, $folderMimetypeId]);
 
         $count = 0;
@@ -515,6 +537,132 @@ class FilecacheUsageSource implements IUsageSource {
         $result->closeCursor();
 
         return ['count' => $count, 'composition' => $composition];
+    }
+
+    /**
+     * recursiveComposition() for many instance top-level entries at once.
+     *
+     * The instance root lists every user home + team folder + external
+     * storage side by side, and each row's composition bar is a full subtree
+     * aggregate — so one query apiece meant a single "Whole server" tree load
+     * fired one scan-this-account's-whole-subtree query per account, scaling
+     * with the number of accounts rather than being bounded. Batching works
+     * because every entry sharing a path produces an identical LIKE pattern
+     * (every user home and every separate-storage team folder sits at
+     * "files"), and GROUP BY storage tells their rows apart again afterwards.
+     * Verified on the dev instance: 60 entries went from 60 queries to 2,
+     * with byte-identical results.
+     *
+     * EXPLAIN confirms the batched form keeps the same treatment as the
+     * single-entry query — `type: range` on fs_storage_path_prefix at the
+     * full key_len 267, as a multi-range scan over the IN list.
+     *
+     * @param InstanceTopLevelEntry[] $entries
+     * @return array<string, array{count: int, composition: array<string, int>}>
+     *     keyed by compositionKey()
+     */
+    private function compositionsForEntries(array $entries): array {
+        $result = [];
+        $byPath = [];
+        foreach ($entries as $entry) {
+            // The same short-circuit recursiveComposition() applies per
+            // folder: an aggregate size of 0 already proves there are no
+            // descendants to break down, so this entry needs no query at all.
+            if ($entry->size <= 0) {
+                $result[$this->compositionKey($entry->storageId, $entry->path)] = ['count' => 0, 'composition' => []];
+                continue;
+            }
+            $byPath[$entry->path][] = $entry;
+        }
+
+        foreach ($byPath as $path => $group) {
+            $path = (string)$path;
+            $storageIds = array_values(array_unique(array_map(
+                static fn (InstanceTopLevelEntry $e) => $e->storageId,
+                $group,
+            )));
+
+            // GROUP BY storage can only separate entries that don't share a
+            // storage. Nothing in the layouts this app knows puts two entries
+            // at the same path on one storage (legacy root-jail team folders
+            // do share a storage, but at distinct "__groupfolders/{id}"
+            // paths, so they never land in the same group) — rather than
+            // depend on that holding forever, fall back to the per-entry
+            // query if a group ever does collide, since the batched result
+            // genuinely could not attribute those rows correctly.
+            if (count($storageIds) !== count($group)) {
+                foreach ($group as $entry) {
+                    $result[$this->compositionKey($entry->storageId, $entry->path)]
+                        = $this->recursiveComposition($entry->storageId, $entry->path, $entry->size);
+                }
+                continue;
+            }
+
+            foreach ($this->bulkComposition($storageIds, $path) as $storageId => $composition) {
+                $result[$this->compositionKey($storageId, $path)] = $composition;
+            }
+        }
+
+        // A storage whose subtree matched nothing produces no group at all;
+        // fill in the empty result its entry's key is still expected to have.
+        foreach ($entries as $entry) {
+            $result[$this->compositionKey($entry->storageId, $entry->path)] ??= ['count' => 0, 'composition' => []];
+        }
+
+        return $result;
+    }
+
+    /**
+     * One grouped composition query covering several storages at the same
+     * path prefix. See compositionsForEntries() for why this is safe.
+     *
+     * @param int[] $storageIds
+     * @return array<int, array{count: int, composition: array<string, int>}> keyed by storage id
+     */
+    private function bulkComposition(array $storageIds, string $path): array {
+        $params = $storageIds;
+        $params[] = $this->folderMimetypeId();
+
+        // path='' is an external storage's own root: every row in the storage
+        // is a descendant of it, so there is no prefix to filter on. (The
+        // per-folder query expresses the same thing as LIKE '%', which
+        // matches every row too but can't serve as an index range bound.)
+        $pathClause = '';
+        if ($path !== '') {
+            $pathClause = ' AND f.path LIKE ?';
+            $params[] = $this->db->escapeLikeParameter($path) . '/%';
+        }
+
+        $sql = 'SELECT f.storage, ' . self::COMPOSITION_MIMETYPE_CASE . ' AS mimetype,
+                    COUNT(*) AS c, SUM(f.size) AS total
+                FROM `*PREFIX*filecache` f USE INDEX (fs_storage_path_prefix)
+                LEFT JOIN `*PREFIX*mimetypes` m ON f.mimetype = m.id
+                WHERE f.storage IN (' . implode(',', array_fill(0, count($storageIds), '?')) . ')
+                    AND f.mimetype != ?' . $pathClause . '
+                GROUP BY f.storage, mimetype';
+
+        $result = $this->db->executeQuery($sql, $params);
+        $byStorage = [];
+        while ($row = $result->fetch()) {
+            $storageId = (int)$row['storage'];
+            $byStorage[$storageId] ??= ['count' => 0, 'composition' => []];
+            $byStorage[$storageId]['count'] += (int)$row['c'];
+            if ($row['mimetype'] !== null) {
+                $byStorage[$storageId]['composition'][(string)$row['mimetype']] = (int)$row['total'];
+            }
+        }
+        $result->closeCursor();
+
+        return $byStorage;
+    }
+
+    /**
+     * Entries are identified by storage AND path (a legacy-layout instance
+     * has several team folders on one storage), so neither alone is a usable
+     * key for a precomputed-composition lookup.
+     */
+    private function compositionKey(int $storageId, string $path): string {
+        return $storageId . "\0" . $path;
     }
 
     /**
@@ -612,9 +760,15 @@ class FilecacheUsageSource implements IUsageSource {
             $truncated = count($entries) > $limit;
             $shown = $truncated ? array_slice($entries, 0, $limit) : $entries;
 
+            // Precomputed for the whole shown list in as few queries as
+            // possible — one per account here would make the cost of opening
+            // this view scale with the number of accounts (see
+            // compositionsForEntries()).
+            $compositions = $this->compositionsForEntries($shown);
+
             $rootComposition = [];
-            $items = array_map(function (InstanceTopLevelEntry $e) use (&$rootComposition) {
-                $composition = $this->recursiveComposition($e->storageId, $e->path, $e->size);
+            $items = array_map(function (InstanceTopLevelEntry $e) use (&$rootComposition, $compositions) {
+                $composition = $compositions[$this->compositionKey($e->storageId, $e->path)];
                 foreach ($composition['composition'] as $mimetype => $size) {
                     $rootComposition[$mimetype] = ($rootComposition[$mimetype] ?? 0) + $size;
                 }

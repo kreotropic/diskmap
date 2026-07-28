@@ -17,6 +17,7 @@ use OCA\DiskMap\Usage\Scope;
 use OCP\AppFramework\Controller;
 use OCP\AppFramework\Http;
 use OCP\AppFramework\Http\Attribute\NoAdminRequired;
+use OCP\AppFramework\Http\Attribute\UserRateLimit;
 use OCP\AppFramework\Http\JSONResponse;
 use OCP\IGroupManager;
 use OCP\IRequest;
@@ -55,6 +56,7 @@ class UsageController extends Controller {
      * there is no identifier parameter to request someone else's.
      */
     #[NoAdminRequired]
+    #[UserRateLimit(limit: 60, period: 60)]
     public function myOverview(): JSONResponse {
         $user = $this->userSession->getUser();
         if ($user === null) {
@@ -73,8 +75,15 @@ class UsageController extends Controller {
      * at production scale — see plan).
      */
     #[NoAdminRequired]
+    #[UserRateLimit(limit: 300, period: 60)]
     public function children(string $scope, string $identifier, string $path = '', int $limit = 200): JSONResponse {
-        $limit = max(1, min($limit, 1000));
+        // Every folder row costs its own recursive subtree aggregation (see
+        // FilecacheUsageSource::recursiveComposition()), so this ceiling is
+        // what bounds the most expensive request this app can be asked to
+        // serve — not just how many rows come back. Lowered from 1000: the
+        // frontend has only ever asked for 200 (FolderTree's CHILD_LIMIT),
+        // and the rate limit above is sized against this worst case.
+        $limit = max(1, min($limit, 500));
 
         try {
             $scopeObj = Scope::fromRequest($scope, $identifier, $path);
@@ -109,6 +118,7 @@ class UsageController extends Controller {
      * returns in roughly bounded time.
      */
     #[NoAdminRequired]
+    #[UserRateLimit(limit: 60, period: 60)]
     public function map(string $scope, string $identifier, string $path = '', int $maxNodes = 1200): JSONResponse {
         // Ceiling raised from 800 to 2000 (the plan's own original "SVG up to
         // ~2000 rectangles" target) once production confirmed this stays
@@ -150,6 +160,7 @@ class UsageController extends Controller {
      * map never draws a tile for.
      */
     #[NoAdminRequired]
+    #[UserRateLimit(limit: 60, period: 60)]
     public function instanceOverview(): JSONResponse {
         $denied = $this->enforceScopeAccess(Scope::forInstance());
         if ($denied !== null) {

@@ -67,10 +67,16 @@ class UserStorageService {
         ];
     }
 
+    /**
+     * Clamped at 0: filecache stores -1 for "size not yet calculated" (a
+     * folder written to but not fully rescanned), and letting that through
+     * would quietly subtract from the total, then surface as a negative
+     * occupancy percentage rather than as the unknown it actually is.
+     */
     private function sizeFor(?int $storageId, string $path): int {
         if ($storageId === null) {
             return 0;
         }
-        return $this->usageSource->totalSize(Scope::forStorage($storageId, $path)) ?? 0;
+        return max(0, $this->usageSource->totalSize(Scope::forStorage($storageId, $path)) ?? 0);
     }
 }
