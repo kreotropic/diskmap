@@ -177,33 +177,7 @@ export default {
 	margin-top: 6px;
 }
 
-.instance-view__panels :deep(.splitpanes__pane) {
-	background: transparent;
-}
 
-.instance-view__panels :deep(.splitpanes--horizontal > .splitpanes__splitter) {
-	position: relative;
-	height: 8px;
-	margin-top: -1px;
-	border-top: 1px solid var(--color-border);
-	border-bottom: 1px solid var(--color-border);
-	background: var(--color-main-background);
-	cursor: row-resize;
-}
 
-.instance-view__panels :deep(.splitpanes--horizontal > .splitpanes__splitter:hover) {
-	background: var(--color-background-hover);
-}
 
-.instance-view__panels :deep(.splitpanes--horizontal > .splitpanes__splitter::before) {
-	content: '';
-	position: absolute;
-	top: 50%;
-	left: 50%;
-	transform: translate(-50%, -50%);
-	width: 32px;
-	height: 3px;
-	border-radius: 2px;
-	background: var(--color-border-dark);
-}
 </style>

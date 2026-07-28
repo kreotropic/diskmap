@@ -178,40 +178,15 @@ export default {
    whatever viewport height is left under the header above. No panel
    headings — the tree/map are visually self-explanatory, and every pixel
    here is height the panels don't get. The split ratio is user-draggable
-   (see .splitpanes__splitter below) and persisted via panelSplit.js. */
+   (splitter styling lives in css/main.css, shared by all three
+   views) and persisted via panelSplit.js. */
 .teamfolder-detail__panels {
 	flex: 1 1 auto;
 	min-height: 0;
 	margin-top: 6px;
 }
 
-.teamfolder-detail__panels :deep(.splitpanes__pane) {
-	background: transparent;
-}
 
-.teamfolder-detail__panels :deep(.splitpanes--horizontal > .splitpanes__splitter) {
-	position: relative;
-	height: 8px;
-	margin-top: -1px;
-	border-top: 1px solid var(--color-border);
-	border-bottom: 1px solid var(--color-border);
-	background: var(--color-main-background);
-	cursor: row-resize;
-}
 
-.teamfolder-detail__panels :deep(.splitpanes--horizontal > .splitpanes__splitter:hover) {
-	background: var(--color-background-hover);
-}
 
-.teamfolder-detail__panels :deep(.splitpanes--horizontal > .splitpanes__splitter::before) {
-	content: '';
-	position: absolute;
-	top: 50%;
-	left: 50%;
-	transform: translate(-50%, -50%);
-	width: 32px;
-	height: 3px;
-	border-radius: 2px;
-	background: var(--color-border-dark);
-}
 </style>

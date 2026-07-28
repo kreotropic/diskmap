@@ -52,6 +52,75 @@
 	--dm-dim-category: 0.4;
 }
 
+/* The draggable tree/map divider. Lives here rather than in each view's
+   scoped styles because all three views (My storage, team folder, whole
+   server) had byte-identical copies of it, and the touch override below
+   has to be stated once, not three times. */
+.app-diskmap .splitpanes__pane {
+	background: transparent;
+}
+
+.app-diskmap .splitpanes--horizontal > .splitpanes__splitter {
+	position: relative;
+	height: 8px;
+	margin-top: -1px;
+	border-top: 1px solid var(--color-border);
+	border-bottom: 1px solid var(--color-border);
+	background: var(--color-main-background);
+	cursor: row-resize;
+}
+
+.app-diskmap .splitpanes--horizontal > .splitpanes__splitter:hover {
+	background: var(--color-background-hover);
+}
+
+/* The grip. */
+.app-diskmap .splitpanes--horizontal > .splitpanes__splitter::before {
+	content: '';
+	position: absolute;
+	top: 50%;
+	left: 50%;
+	transform: translate(-50%, -50%);
+	width: 32px;
+	height: 3px;
+	border-radius: 2px;
+	background: var(--color-border-dark);
+}
+
+/* Touch input needs a much bigger target than a mouse does: 8px is a
+   comfortable pointer target but far under the ~44px a fingertip needs, so
+   on a phone the divider was effectively immovable. Give it real height and
+   a wider grip when the primary input is coarse, plus a little hit area
+   beyond the visible bar via ::after — 22 + 2×9 = 40px of grabbable band.
+   The 9px overhang stays under one tree row (~25px), so it can't plausibly
+   swallow a tap meant for the row above or the tile below. */
+@media (pointer: coarse) {
+	.app-diskmap .splitpanes--horizontal > .splitpanes__splitter {
+		height: 22px;
+		/* Without this the hit area only works upwards. The pane below is a
+		   positioned element (.dm-treemap sets position: relative) that comes
+		   later in the DOM, so it paints over the part of ::after that hangs
+		   down into it and swallows the touch — confirmed by hit-testing:
+		   a press 12px above the centre reached the splitter, the same press
+		   12px below landed on the treemap's <svg>. */
+		z-index: 2;
+	}
+
+	.app-diskmap .splitpanes--horizontal > .splitpanes__splitter::before {
+		width: 56px;
+		height: 4px;
+	}
+
+	.app-diskmap .splitpanes--horizontal > .splitpanes__splitter::after {
+		content: '';
+		position: absolute;
+		left: 0;
+		right: 0;
+		top: -9px;
+		bottom: -9px;
+	}
+}
+
 /* Dark mode is stepped independently against the #292929 surface, never
    flipped or reused from light — the dark lightness band (L 0.48–0.67)
    doesn't even overlap several of the light steps. */
