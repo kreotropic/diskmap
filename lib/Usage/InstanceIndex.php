@@ -174,6 +174,10 @@ class InstanceIndex {
      * listTeamFolders() and TeamFolderService::listAll() already pay).
      */
     private function sumTeamFolderTrashAndVersions(): int {
+        if (!$this->layoutDetector->teamFoldersAvailable()) {
+            return 0;
+        }
+
         $qb = $this->db->getQueryBuilder();
         $qb->select('folder_id')->from('group_folders');
         $result = $qb->executeQuery();
@@ -267,6 +271,10 @@ class InstanceIndex {
      * @return InstanceTopLevelEntry[]
      */
     private function listTeamFolders(): array {
+        if (!$this->layoutDetector->teamFoldersAvailable()) {
+            return [];
+        }
+
         $qb = $this->db->getQueryBuilder();
         $qb->select('folder_id', 'mount_point')->from('group_folders');
         $result = $qb->executeQuery();

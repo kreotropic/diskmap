@@ -41,6 +41,13 @@ class TeamFolderService {
      * }>
      */
     public function listAll(): array {
+        // Guards every read below: fetchFolders() and fetchGroupsByFolder()
+        // both go straight at the groupfolders app's tables, which are absent
+        // entirely on an instance that never installed it.
+        if (!$this->layoutDetector->teamFoldersAvailable()) {
+            return [];
+        }
+
         $groupsByFolder = $this->fetchGroupsByFolder();
 
         $result = [];

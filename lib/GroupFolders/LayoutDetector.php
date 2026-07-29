@@ -9,6 +9,7 @@ declare(strict_types=1);
 
 namespace OCA\DiskMap\GroupFolders;
 
+use OCP\App\IAppManager;
 use OCP\DB\QueryBuilder\IQueryBuilder;
 use OCP\IDBConnection;
 
@@ -46,7 +47,28 @@ class LayoutDetector {
     /** @var array<int, ResolvedTeamFolderStorage> */
     private array $resolveCache = [];
 
-    public function __construct(private IDBConnection $db) {
+    public function __construct(
+        private IDBConnection $db,
+        private IAppManager $appManager,
+    ) {
+    }
+
+    /**
+     * Whether this instance has team folders at all.
+     *
+     * The metadata this class's callers read lives in the groupfolders app's
+     * own tables, and on an instance that never installed it those tables do
+     * not exist — querying them is a hard SQL error, not an empty result. The
+     * app is an optional companion rather than a declared dependency, so every
+     * entry point into those tables has to ask first. (resolve() itself is
+     * safe: it only ever touches core's own storages/filecache.)
+     *
+     * "Enabled for anyone" rather than merely installed: a disabled app's
+     * folders are not mounted, so they are not part of the instance's live
+     * storage picture even while its tables sit there still populated.
+     */
+    public function teamFoldersAvailable(): bool {
+        return $this->appManager->isEnabledForAnyone('groupfolders');
     }
 
     /**
