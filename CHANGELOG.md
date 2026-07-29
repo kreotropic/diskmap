@@ -1,5 +1,5 @@
 <!--
-  - SPDX-FileCopyrightText: 2026 Ricardo Ferreira <ricardo.ferreira@jofebar.com>
+  - SPDX-FileCopyrightText: 2026 Ricardo Ferreira <rsfneg@gmail.com>
   - SPDX-License-Identifier: AGPL-3.0-or-later
   -->
 
@@ -29,6 +29,17 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   layout transparently.
 
 ### Fixed
+- Opening a folder on the whole-server view took seconds. The recursive
+  per-folder aggregates behind the "Composition" and "File count" columns are
+  the only read whose cost grows with the whole subtree — measured at 1.4 s for
+  a single folder with 300k descendants — and the row listing was waiting on
+  them. They now come from their own endpoint, so rows render immediately and
+  the two columns fill in underneath; the aggregates themselves are batched one
+  query per level instead of one per folder, and cached under a key that
+  includes the folder's own propagated `size` and `mtime`, which invalidates
+  itself whenever anything below it changes. On a 300k-file level: 1928 ms
+  before the tree showed anything, now 2 ms, with the columns following in
+  1202 ms cold and 4 ms once cached.
 - Whole-server view issued one recursive aggregation query per account, so its
   cost scaled with the number of accounts. Entries are now batched into a
   single grouped query per path prefix, and display names are read through

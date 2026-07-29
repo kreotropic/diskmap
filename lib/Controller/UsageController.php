@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 /**
- * SPDX-FileCopyrightText: 2026 Ricardo Ferreira <ricardo.ferreira@jofebar.com>
+ * SPDX-FileCopyrightText: 2026 Ricardo Ferreira <rsfneg@gmail.com>
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
@@ -70,19 +70,89 @@ class UsageController extends Controller {
      * One level of immediate children (files and folders) under $scope's
      * path — NOT recursive, unlike map(). Powers the WinDirStat-style
      * expandable tree pane (plan Phase 3b): each expand click fetches
-     * exactly one more level. Folder rows carry a recursive descendant file
-     * count (a real query, accepted as a known perf risk not yet validated
-     * at production scale — see plan).
+     * exactly one more level.
+     *
+     * Every figure in the response comes straight from the rows themselves,
+     * so this is a bounded, indexed read whatever the subtree below holds.
+     * The tree's two recursive columns are served by composition() below.
      */
     #[NoAdminRequired]
     #[UserRateLimit(limit: 300, period: 60)]
     public function children(string $scope, string $identifier, string $path = '', int $limit = 200): JSONResponse {
-        // Every folder row costs its own recursive subtree aggregation (see
-        // FilecacheUsageSource::recursiveComposition()), so this ceiling is
-        // what bounds the most expensive request this app can be asked to
-        // serve — not just how many rows come back. Lowered from 1000: the
-        // frontend has only ever asked for 200 (FolderTree's CHILD_LIMIT),
-        // and the rate limit above is sized against this worst case.
+        return $this->respondForScope($scope, $identifier, $path, $limit, function (Scope $scopeObj, int $limit) {
+            $result = $this->usageSource->children($scopeObj, $limit);
+            return [
+                'root' => $result['root'],
+                'items' => $result['items'],
+                'truncated' => $result['truncated'],
+            ];
+        });
+    }
+
+    /**
+     * The recursive descendant file count + per-mimetype breakdown for the
+     * same level children() returns, keyed by child name.
+     *
+     * Its own endpoint because it is the one read here whose cost grows with
+     * the whole subtree instead of with $limit — on a large folder that is
+     * seconds, against tens of milliseconds for the listing. Splitting them
+     * lets the tree pane paint its rows from children() straight away and
+     * fill the "Composition" and "File count" columns in when this answers,
+     * rather than the whole level waiting on the biggest folder in it.
+     *
+     * Rate-limited like children() rather than like the heavier map(): the
+     * frontend fires exactly one of these per one of those, and the cache
+     * behind it (FilecacheUsageSource + CompositionCache) means the repeat
+     * cost of browsing back over the same folders is a lookup, not a scan.
+     */
+    #[NoAdminRequired]
+    #[UserRateLimit(limit: 300, period: 60)]
+    public function composition(string $scope, string $identifier, string $path = '', int $limit = 200): JSONResponse {
+        return $this->respondForScope($scope, $identifier, $path, $limit, function (Scope $scopeObj, int $limit) {
+            $result = $this->usageSource->childComposition($scopeObj, $limit);
+            return [
+                'root' => $result['root'] !== null ? $this->serializeAggregate($result['root']) : null,
+                // Cast to an object so this is always a JSON map keyed by
+                // child name. PHP turns decimal-string array keys into ints,
+                // and a level whose folders happen to be named 0, 1, 2 would
+                // otherwise be a list to json_encode() and come out as a JSON
+                // array — a different response shape for nothing but the
+                // folder names involved.
+                'items' => (object)array_map($this->serializeAggregate(...), $result['items']),
+            ];
+        });
+    }
+
+    /**
+     * IUsageSource speaks of a descendant 'count'; every JSON response this
+     * app serves calls that field 'fileCount' (see UsageNode), and the tree
+     * pane reads it under that name on rows that came from children(). Rename
+     * it here, at the HTTP boundary, so one level's two requests describe the
+     * same row with the same vocabulary.
+     *
+     * @param array{count: int, composition: array<string, int>} $aggregate
+     * @return array{fileCount: int, composition: array<string, int>}
+     */
+    private function serializeAggregate(array $aggregate): array {
+        return [
+            'fileCount' => $aggregate['count'],
+            'composition' => $aggregate['composition'],
+        ];
+    }
+
+    /**
+     * The shared preamble of children() and composition(), which must agree
+     * on all three of it: the same $limit clamp (so the two halves of one
+     * level describe the same set of rows), the same scope parsing, and the
+     * same authorization check.
+     *
+     * @param callable(Scope, int): array $handler
+     */
+    private function respondForScope(string $scope, string $identifier, string $path, int $limit, callable $handler): JSONResponse {
+        // Bounds the most expensive request this app can be asked to serve,
+        // not just how many rows come back. Lowered from 1000: the frontend
+        // has only ever asked for 200 (FolderTree's CHILD_LIMIT), and the
+        // rate limits above are sized against this worst case.
         $limit = max(1, min($limit, 500));
 
         try {
@@ -96,15 +166,11 @@ class UsageController extends Controller {
             return $denied;
         }
 
-        $result = $this->usageSource->children($scopeObj, $limit);
-
         return new JSONResponse([
             'scope' => $scopeObj->type,
             'identifier' => $scopeObj->identifier,
             'path' => $scopeObj->path,
-            'root' => $result['root'],
-            'items' => $result['items'],
-            'truncated' => $result['truncated'],
+            ...$handler($scopeObj, $limit),
         ]);
     }
 

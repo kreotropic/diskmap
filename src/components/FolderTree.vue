@@ -1,5 +1,5 @@
 <!--
-  - SPDX-FileCopyrightText: 2026 Ricardo Ferreira <ricardo.ferreira@jofebar.com>
+  - SPDX-FileCopyrightText: 2026 Ricardo Ferreira <rsfneg@gmail.com>
   - SPDX-License-Identifier: AGPL-3.0-or-later
   -->
 <template>
@@ -57,7 +57,9 @@
 							:title="node.name">{{ node.name }}</span>
 					</span>
 					<span class="dm-tree__col-composition">
-						<span class="dm-tree__comp-track">
+						<span
+							class="dm-tree__comp-track"
+							:class="{ 'dm-tree__comp-track--pending': node.compositionPending }">
 							<span
 								v-for="seg in compositionSegments(node)"
 								:key="seg.category"
@@ -66,7 +68,11 @@
 						</span>
 					</span>
 					<span class="dm-tree__col-size">{{ formatBytes(node.size) }}</span>
-					<span class="dm-tree__col-count">{{ formatCount(node.fileCount) }}</span>
+					<!-- '…' rather than formatCount()'s '—' while the aggregate is
+					     still in flight: '—' is what a row with genuinely no count
+					     shows (a file), so reusing it here would read as "no files"
+					     on a folder that simply hasn't been measured yet. -->
+					<span class="dm-tree__col-count">{{ node.compositionPending ? '…' : formatCount(node.fileCount) }}</span>
 					<span class="dm-tree__col-mtime" @mouseenter="titleIfTruncated">{{ formatDate(node.mtime) }}</span>
 				</div>
 			</div>
@@ -80,7 +86,7 @@ import NcEmptyContent from '@nextcloud/vue/components/NcEmptyContent'
 import NcNoteCard from '@nextcloud/vue/components/NcNoteCard'
 import { translate as t } from '@nextcloud/l10n'
 
-import { fetchChildren } from '../services/api.js'
+import { fetchChildren, fetchComposition } from '../services/api.js'
 import { formatBytes, formatDate, formatCount } from '../utils/format.js'
 import { categoryForMimetype, categoryForFile, CATEGORY_OTHER } from '../utils/mimetypeCategory.js'
 
@@ -186,8 +192,9 @@ export default {
 					size: data.root.size,
 					mtime: data.root.mtime,
 					type: data.root.type,
-					fileCount: data.root.fileCount ?? null,
-					composition: data.root.composition ?? null,
+					fileCount: null,
+					composition: null,
+					compositionPending: true,
 					kind: null,
 					depth: 0,
 					// Never collapsible — it's the scope root, always visible,
@@ -198,6 +205,17 @@ export default {
 				}
 				const children = this.childNodes(data.items, data.truncated, root)
 				this.flatTree = [root, ...children]
+				// Not awaited: the rows are already on screen, and this is the
+				// half that can take seconds on a large scope.
+				//
+				// Read the nodes back out of flatTree rather than passing the
+				// local `root`/`children` along: those are still the plain
+				// objects that went in, and flatTree is reactive, so writing to
+				// a plain object updates the data without ever going through
+				// Vue's proxy — the aggregates would arrive and nothing would
+				// re-render. Confirmed live: every bar sat in the pending state
+				// forever even though the responses were 200s with real data.
+				this.loadComposition(this.flatTree[0], this.flatTree.slice(1))
 			} catch (e) {
 				if (token === this.loadToken) {
 					this.error = true
@@ -237,6 +255,12 @@ export default {
 				const children = this.childNodes(data.items, data.truncated, node)
 				this.flatTree.splice(idx + 1, 0, ...children)
 				node.expanded = true
+				// Same as loadRoot(): deliberately not awaited, so revealPath()'s
+				// chain of expands isn't serialized behind the slow half either,
+				// and re-read from flatTree for the reactivity reason spelled
+				// out there. (`node` itself already came from the template, so
+				// it is a proxy — only the freshly spliced rows are not.)
+				this.loadComposition(node, this.flatTree.slice(idx + 1, idx + 1 + children.length))
 			} catch (e) {
 				// Silently ignore — the arrow stays collapsed, matching FolderPicker.vue's precedent.
 			} finally {
@@ -273,6 +297,9 @@ export default {
 						mtime: null,
 						type: OTHERS_TYPE,
 						fileCount: null,
+						// Nothing to wait for: this row stands for whatever
+						// wasn't fetched, so its real mix is unknowable.
+						compositionPending: false,
 						depth: parentNode.depth + 1,
 						hasArrow: false,
 						expanded: false,
@@ -301,8 +328,14 @@ export default {
 				// Only ever set for a 'file' item — used to color its
 				// composition-bar segment via categoryForMimetype().
 				mimetype: item.mimetype ?? null,
-				fileCount: item.fileCount ?? null,
-				composition: item.composition ?? null,
+				// Both arrive from the separate composition request (see
+				// loadComposition()), never from the listing itself.
+				fileCount: null,
+				composition: null,
+				// Only a folder has recursive aggregates worth waiting for: a
+				// file's own mimetype already gives its bar, and its file count
+				// is legitimately blank, so it must not render as pending.
+				compositionPending: item.type === 'folder',
 				// Only set on a top-level row of the whole-instance scope
 				// ('user' | 'teamfolder' | 'external') — null everywhere else.
 				kind: item.kind ?? null,
@@ -310,6 +343,56 @@ export default {
 				hasArrow: item.type === 'folder' && item.size > 0,
 				expanded: false,
 				loadingChildren: false,
+			}
+		},
+		// Fills in the two recursive columns ("Composition" and "File count")
+		// for one already-rendered level. Kept apart from the fetch that
+		// produced those rows because it is the only request here whose cost
+		// grows with the whole subtree instead of with the row count — on the
+		// whole-server view that was the multi-second wait before a folder
+		// would open at all. Now the rows appear immediately and these two
+		// columns resolve underneath them.
+		//
+		// Never awaited by its callers, so it must clean up after itself: any
+		// path out of here has to clear compositionPending, or a row keeps a
+		// spinner-ish placeholder forever.
+		async loadComposition(parentNode, children) {
+			const token = this.loadToken
+			// Files and the synthetic truncation row have nothing to fetch.
+			const pending = [parentNode, ...children].filter((n) => n.compositionPending)
+			if (!pending.length) {
+				return
+			}
+			try {
+				const data = await fetchComposition(this.scope, this.identifier, { path: parentNode.navPath, limit: CHILD_LIMIT })
+				// The tree was replaced under us (scope/identifier changed).
+				// These nodes belong to the old one — the new tree is issuing
+				// its own requests, so leave it alone entirely.
+				if (token !== this.loadToken) {
+					return
+				}
+				if (data.root && parentNode.compositionPending) {
+					parentNode.fileCount = data.root.fileCount
+					parentNode.composition = data.root.composition
+				}
+				// Matched by name, not by index: the response is keyed by
+				// child name and covers only folders, so a level whose rows
+				// are a mix of both stays correctly aligned.
+				for (const child of children) {
+					const aggregate = data.items?.[child.name]
+					if (aggregate) {
+						child.fileCount = aggregate.fileCount
+						child.composition = aggregate.composition
+					}
+				}
+			} catch (e) {
+				// Leave the columns blank rather than surfacing an error: the
+				// level itself loaded fine and is fully usable without them,
+				// exactly like expand()'s own silent failure.
+			} finally {
+				for (const node of pending) {
+					node.compositionPending = false
+				}
 			}
 		},
 		// Native tooltip, but only where it earns its keep: a cell whose text
@@ -653,6 +736,38 @@ export default {
 .dm-tree__comp-seg {
 	display: block;
 	height: 100%;
+}
+
+/* The recursive columns arrive after the row does (see loadComposition()),
+   so the empty track needs to say "measuring" rather than "nothing here" —
+   an unadorned empty bar is exactly what a folder with no files looks like.
+   A slow sweep over the track's own colour, not a spinner: it's a 10px strip
+   repeated down every folder row, and anything more assertive would turn a
+   normal load into a screen full of activity. */
+.dm-tree__comp-track--pending {
+	background: linear-gradient(
+		90deg,
+		var(--color-background-darker) 30%,
+		var(--color-background-hover) 50%,
+		var(--color-background-darker) 70%
+	);
+	background-size: 300% 100%;
+	animation: dm-tree-sweep 1.4s ease-in-out infinite;
+}
+
+@keyframes dm-tree-sweep {
+	from {
+		background-position: 150% 0;
+	}
+	to {
+		background-position: -150% 0;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.dm-tree__comp-track--pending {
+		animation: none;
+	}
 }
 
 .dm-tree__col-size,

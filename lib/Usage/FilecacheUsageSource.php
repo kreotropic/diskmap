@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 /**
- * SPDX-FileCopyrightText: 2026 Ricardo Ferreira <ricardo.ferreira@jofebar.com>
+ * SPDX-FileCopyrightText: 2026 Ricardo Ferreira <rsfneg@gmail.com>
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
@@ -33,8 +33,12 @@ class FilecacheUsageSource implements IUsageSource {
         private LayoutDetector $layoutDetector,
         private UserHomeResolver $userHomeResolver,
         private InstanceIndex $instanceIndex,
+        private CompositionCache $compositionCache,
     ) {
     }
+
+    /** The aggregate of a folder with nothing under it — see recursiveComposition(). */
+    private const EMPTY_COMPOSITION = ['count' => 0, 'composition' => []];
 
     public function totalSize(Scope $scope): ?int {
         if ($scope->type === Scope::TYPE_INSTANCE) {
@@ -93,23 +97,18 @@ class FilecacheUsageSource implements IUsageSource {
         [$rows, $truncated] = $this->fetchChildRows($storageId, $rootRow['fileid'], $limit);
 
         $folderMimetypeId = $this->folderMimetypeId();
-        $items = array_map(function (array $row) use ($storageId, $folderMimetypeId) {
+        $items = array_map(function (array $row) use ($folderMimetypeId) {
             $isFolder = (int)$row['mimetype'] === $folderMimetypeId;
-            $size = (int)$row['size'];
-            $composition = $isFolder ? $this->recursiveComposition($storageId, (string)$row['path'], $size) : null;
             return new UsageNode(
                 name: (string)$row['name'],
                 path: (string)$row['path'],
-                size: $size,
+                size: (int)$row['size'],
                 type: $isFolder ? 'folder' : 'file',
                 mimetype: !$isFolder && $row['mimetype_name'] !== null ? (string)$row['mimetype_name'] : null,
                 mtime: (int)$row['mtime'],
-                fileCount: $composition['count'] ?? null,
-                composition: $composition['composition'] ?? null,
             );
         }, $rows);
 
-        $rootComposition = $this->recursiveComposition($storageId, $path, $rootRow['size']);
         return [
             'root' => new UsageNode(
                 name: $rootRow['name'],
@@ -118,12 +117,183 @@ class FilecacheUsageSource implements IUsageSource {
                 type: 'folder', // every rootPath() resolution is a directory
                 mimetype: null,
                 mtime: $rootRow['mtime'],
-                fileCount: $rootComposition['count'],
-                composition: $rootComposition['composition'],
             ),
             'items' => $items,
             'truncated' => $truncated,
         ];
+    }
+
+    /**
+     * The recursive per-folder aggregates children() deliberately leaves out:
+     * descendant file count and per-mimetype size breakdown, for one level's
+     * worth of folders at once.
+     *
+     * Split off from children() because the two have completely different
+     * cost profiles and the UI can use them at different times. Listing a
+     * level is a bounded, indexed lookup (~40 ms even mid-tree on a large
+     * instance); these aggregates are linear in the *whole subtree* below
+     * each row, which on the whole-server view is what made opening a folder
+     * take seconds. Serving them separately lets the tree render its rows
+     * immediately and fill the two aggregate columns in when they arrive,
+     * instead of the whole level waiting on the slowest folder in it.
+     *
+     * Three things keep the cost down, in order of how much they matter:
+     *  1. CompositionCache — a hit costs nothing and needs no query at all.
+     *  2. compositionByChild() — one query for the level instead of one per
+     *     folder in it.
+     *  3. the size <= 0 short-circuit, unchanged from recursiveComposition().
+     *
+     * @return array{
+     *     root: ?array{count: int, composition: array<string, int>},
+     *     items: array<string, array{count: int, composition: array<string, int>}>, // keyed by child name
+     * }
+     */
+    public function childComposition(Scope $scope, int $limit): array {
+        if ($scope->type === Scope::TYPE_INSTANCE) {
+            if ($scope->path === '') {
+                return $this->instanceRootComposition($limit);
+            }
+            // Past its own root the instance scope is just some other
+            // storage+path, exactly as instanceChildren() treats it.
+            $delegate = $this->resolveInstanceDelegate($scope->path);
+            if ($delegate === null) {
+                return ['root' => null, 'items' => []];
+            }
+            return $this->childComposition($delegate, $limit);
+        }
+
+        $root = $this->rootPath($scope);
+        if ($root === null) {
+            return ['root' => null, 'items' => []];
+        }
+        [$storageId, $path] = $root;
+
+        $rootRow = $this->rowAtExactPath($storageId, $path);
+        if ($rootRow === null) {
+            return ['root' => null, 'items' => []];
+        }
+
+        // Only folders get an aggregate: a file's own mimetype already says
+        // everything about its composition, and its "descendant count" is
+        // meaningless. Fetching the child rows again (rather than having
+        // children() pass them over) costs one indexed lookup and keeps this
+        // endpoint independently callable — the two requests are concurrent,
+        // not chained, so the tree isn't waiting on this one either way.
+        [$rows] = $this->fetchChildRows($storageId, $rootRow['fileid'], $limit);
+        $folderMimetypeId = $this->folderMimetypeId();
+        // A list of records, NOT a name-keyed map: PHP silently converts a
+        // decimal-string array key to an int, so a folder called "2024" would
+        // come back out of a foreach as int 2024 and blow up the first
+        // string-typed call it reaches. (It did — caught by the equivalence
+        // check against a real team folder whose subfolders are years.)
+        $folders = [];
+        foreach ($rows as $row) {
+            if ((int)$row['mimetype'] !== $folderMimetypeId) {
+                continue;
+            }
+            $folders[] = ['name' => (string)$row['name'], 'size' => (int)$row['size'], 'mtime' => (int)$row['mtime']];
+        }
+
+        $items = [];
+        $missing = false;
+        foreach ($folders as $folder) {
+            if ($folder['size'] <= 0) {
+                $items[$folder['name']] = self::EMPTY_COMPOSITION;
+                continue;
+            }
+            $hit = $this->compositionCache->get($storageId, $this->joinPath($path, $folder['name']), $folder['size'], $folder['mtime']);
+            if ($hit === null) {
+                $missing = true;
+            } else {
+                $items[$folder['name']] = $hit;
+            }
+        }
+
+        $rootAggregate = $rootRow['size'] > 0
+            ? $this->compositionCache->get($storageId, $path, $rootRow['size'], $rootRow['mtime'])
+            : self::EMPTY_COMPOSITION;
+        if ($rootAggregate === null) {
+            $missing = true;
+        }
+
+        // One miss anywhere in the level costs the same query as all of them
+        // missing (it scans the parent's whole subtree either way), so there
+        // is nothing to gain from being selective — and in practice the two
+        // travel together: the parent's own size/mtime stamp moves whenever
+        // any descendant changes, so a child miss is almost always
+        // accompanied by a root miss.
+        if ($missing) {
+            $grouped = $this->compositionByChild($storageId, $path);
+
+            // Every descendant row falls into exactly one immediate-child
+            // group, so the parent's own aggregate is their sum — no separate
+            // query, and it stays exact even when the level was truncated
+            // (compositionByChild() knows nothing about $limit).
+            $rootAggregate = self::EMPTY_COMPOSITION;
+            foreach ($grouped as $aggregate) {
+                $rootAggregate['count'] += $aggregate['count'];
+                foreach ($aggregate['composition'] as $mimetype => $size) {
+                    $rootAggregate['composition'][$mimetype] = ($rootAggregate['composition'][$mimetype] ?? 0) + $size;
+                }
+            }
+            $this->compositionCache->set($storageId, $path, $rootRow['size'], $rootRow['mtime'], $rootAggregate);
+
+            foreach ($folders as $folder) {
+                if ($folder['size'] <= 0) {
+                    continue;
+                }
+                // compositionByChild() keys by full path, not by bare name.
+                // A folder holding nothing but empty subfolders produces no
+                // group of its own (folder rows are excluded from the
+                // aggregate) — that's a real empty result, not a lookup miss.
+                $childPath = $this->joinPath($path, $folder['name']);
+                $items[$folder['name']] = $grouped[$childPath] ?? self::EMPTY_COMPOSITION;
+                $this->compositionCache->set($storageId, $childPath, $folder['size'], $folder['mtime'], $items[$folder['name']]);
+            }
+        }
+
+        return ['root' => $rootAggregate, 'items' => $items];
+    }
+
+    /**
+     * childComposition() for the whole-instance root, whose "children" are
+     * whole storages rather than folders in one — already batched by
+     * compositionsForEntries(), which is also where their caching lives.
+     *
+     * @return array{root: array{count: int, composition: array<string, int>}, items: array<string, array{count: int, composition: array<string, int>}>}
+     */
+    private function instanceRootComposition(int $limit): array {
+        $entries = $this->instanceIndex->listAll();
+        // Same ordering and truncation instanceChildren() applies, so the
+        // names here line up with the rows the tree actually rendered.
+        usort($entries, static fn (InstanceTopLevelEntry $a, InstanceTopLevelEntry $b) => $b->size <=> $a->size);
+        $shown = array_slice($entries, 0, $limit);
+        $compositions = $this->compositionsForEntries($shown);
+
+        $items = [];
+        $root = self::EMPTY_COMPOSITION;
+        foreach ($shown as $entry) {
+            $aggregate = $compositions[$this->compositionKey($entry->storageId, $entry->path)];
+            $items[$entry->name] = $aggregate;
+            $root['count'] += $aggregate['count'];
+            foreach ($aggregate['composition'] as $mimetype => $size) {
+                $root['composition'][$mimetype] = ($root['composition'][$mimetype] ?? 0) + $size;
+            }
+        }
+
+        // Reflects $shown only — a truncated top-level list leaves out
+        // whatever is beyond $limit, the same honesty tradeoff
+        // instanceChildren()'s own root size already makes.
+        return ['root' => $root, 'items' => $items];
+    }
+
+    /**
+     * Joins a parent path and a child name, handling the one path that isn't
+     * a normal folder path: an external storage's root lives at the literal
+     * empty string, so its children have no leading slash to join onto.
+     */
+    private function joinPath(string $parent, string $name): string {
+        return $parent !== '' ? $parent . '/' . $name : $name;
     }
 
     /**
@@ -482,11 +652,17 @@ class FilecacheUsageSource implements IUsageSource {
     /**
      * Recursive descendant file count AND per-mimetype size breakdown for
      * one folder, in a single query (plan Phase 3b + the "Composição"
-     * stacked bar follow-up) — a real, non-free query, accepted as a
-     * performance risk not yet validated at production scale; see plan.
-     * Used to be two separate queries (a plain COUNT(*), then a second one
-     * added for composition) until it became clear a GROUP BY gives both at
-     * once for the same cost as the original COUNT(*) alone.
+     * stacked bar follow-up). Used to be two separate queries (a plain
+     * COUNT(*), then a second one added for composition) until it became
+     * clear a GROUP BY gives both at once for the same cost as the original
+     * COUNT(*) alone.
+     *
+     * This is the single-folder form, now only reached by
+     * compositionsForEntries()' collision fallback — the listing paths go
+     * through compositionByChild() (whole level, one query) or the cache in
+     * front of it. Its cost is linear in the subtree: measured 4.5 ms over
+     * 1k descendants, 57 ms over 15k, 1421 ms over 300k, which is why no
+     * request calls it once per row any more.
      *
      * Deliberately one query per folder with a literal path, NOT a
      * correlated subquery: EXPLAIN confirmed live that a correlated `path
@@ -525,7 +701,7 @@ class FilecacheUsageSource implements IUsageSource {
         // A folder's own aggregate size already tells us whether it has any
         // descendants at all — skip the query for an empty folder.
         if ($size <= 0) {
-            return ['count' => 0, 'composition' => []];
+            return self::EMPTY_COMPOSITION;
         }
 
         // path='' only happens for an external storage's own root (plan
@@ -582,15 +758,26 @@ class FilecacheUsageSource implements IUsageSource {
     private function compositionsForEntries(array $entries): array {
         $result = [];
         $byPath = [];
+        $computed = [];
         foreach ($entries as $entry) {
+            $key = $this->compositionKey($entry->storageId, $entry->path);
             // The same short-circuit recursiveComposition() applies per
             // folder: an aggregate size of 0 already proves there are no
             // descendants to break down, so this entry needs no query at all.
             if ($entry->size <= 0) {
-                $result[$this->compositionKey($entry->storageId, $entry->path)] = ['count' => 0, 'composition' => []];
+                $result[$key] = self::EMPTY_COMPOSITION;
+                continue;
+            }
+            // A cached account drops out of the batch entirely — on a settled
+            // instance that leaves nothing to query, which is what makes
+            // re-opening the whole-server root cost nothing the second time.
+            $hit = $this->compositionCache->get($entry->storageId, $entry->path, $entry->size, $entry->mtime);
+            if ($hit !== null) {
+                $result[$key] = $hit;
                 continue;
             }
             $byPath[$entry->path][] = $entry;
+            $computed[] = $entry;
         }
 
         foreach ($byPath as $path => $group) {
@@ -624,7 +811,19 @@ class FilecacheUsageSource implements IUsageSource {
         // A storage whose subtree matched nothing produces no group at all;
         // fill in the empty result its entry's key is still expected to have.
         foreach ($entries as $entry) {
-            $result[$this->compositionKey($entry->storageId, $entry->path)] ??= ['count' => 0, 'composition' => []];
+            $result[$this->compositionKey($entry->storageId, $entry->path)] ??= self::EMPTY_COMPOSITION;
+        }
+
+        // Only what this call actually computed — re-storing a cache hit
+        // would just rewrite the same value under the same key.
+        foreach ($computed as $entry) {
+            $this->compositionCache->set(
+                $entry->storageId,
+                $entry->path,
+                $entry->size,
+                $entry->mtime,
+                $result[$this->compositionKey($entry->storageId, $entry->path)],
+            );
         }
 
         return $result;
@@ -672,6 +871,66 @@ class FilecacheUsageSource implements IUsageSource {
         $result->closeCursor();
 
         return $byStorage;
+    }
+
+    /**
+     * recursiveComposition() for every immediate child of one folder at once
+     * — the per-parent counterpart to compositionsForEntries()'s per-storage
+     * batching, and what childComposition() runs on a cache miss.
+     *
+     * Both forms scan exactly the same rows (the parent's whole subtree), so
+     * this is not a way to do less work: measured on a 300k-row synthetic
+     * tree, expanding a 15-folder level went from 236.6 ms as 15 separate
+     * queries to 140.6 ms as this one — a real 1.7x, entirely from paying the
+     * round trip, the LIKE range setup and the grouping once instead of
+     * fifteen times. It is the cache above it that removes the cost; this
+     * only makes the miss cheaper.
+     *
+     * Attribution is by segment count, not by string offset: SUBSTRING_INDEX
+     * with a count of (depth of $path) + 1 truncates every descendant's path
+     * to its own top-level ancestor under $path, which IS that child's full
+     * path — so the grouping key needs no arithmetic over the parent prefix
+     * and, unlike a SUBSTRING(path, <offset>) form, cannot be thrown off by
+     * the difference between PHP's byte offsets and MySQL's character ones on
+     * a non-ASCII folder name.
+     *
+     * SUBSTRING_INDEX is MySQL-specific, matching the <database>mysql</database>
+     * this app declares in info.xml. A PostgreSQL/SQLite port needs an
+     * equivalent "first N segments" expression here (SPLIT_PART composition on
+     * PostgreSQL; SUBSTR/INSTR on SQLite) — this method and the two queries
+     * above it are the app's entire dialect-dependent surface.
+     *
+     * @return array<string, array{count: int, composition: array<string, int>}>
+     *     keyed by the child's full filecache path
+     */
+    private function compositionByChild(int $storageId, string $path): array {
+        // Depth of the parent in segments: 'files/foo' is 2, and the external
+        // storage root ('') is 0. One more than that is where its children sit.
+        $childSegments = ($path === '' ? 0 : substr_count($path, '/') + 1) + 1;
+        $likePattern = $path !== '' ? $this->db->escapeLikeParameter($path) . '/%' : '%';
+
+        $sql = 'SELECT SUBSTRING_INDEX(f.path, \'/\', ?) AS child,
+                    ' . self::COMPOSITION_MIMETYPE_CASE . ' AS mimetype,
+                    COUNT(*) AS c, SUM(f.size) AS total
+                FROM `*PREFIX*filecache` f USE INDEX (fs_storage_path_prefix)
+                LEFT JOIN `*PREFIX*mimetypes` m ON f.mimetype = m.id
+                WHERE f.storage = ? AND f.path LIKE ? AND f.mimetype != ?
+                GROUP BY child, mimetype';
+
+        $result = $this->db->executeQuery($sql, [$childSegments, $storageId, $likePattern, $this->folderMimetypeId()]);
+
+        $byChild = [];
+        while ($row = $result->fetch()) {
+            $child = (string)$row['child'];
+            $byChild[$child] ??= self::EMPTY_COMPOSITION;
+            $byChild[$child]['count'] += (int)$row['c'];
+            if ($row['mimetype'] !== null) {
+                $byChild[$child]['composition'][(string)$row['mimetype']] = (int)$row['total'];
+            }
+        }
+        $result->closeCursor();
+
+        return $byChild;
     }
 
     /**
@@ -778,38 +1037,23 @@ class FilecacheUsageSource implements IUsageSource {
             $truncated = count($entries) > $limit;
             $shown = $truncated ? array_slice($entries, 0, $limit) : $entries;
 
-            // Precomputed for the whole shown list in as few queries as
-            // possible — one per account here would make the cost of opening
-            // this view scale with the number of accounts (see
-            // compositionsForEntries()).
-            $compositions = $this->compositionsForEntries($shown);
-
-            $rootComposition = [];
-            $items = array_map(function (InstanceTopLevelEntry $e) use (&$rootComposition, $compositions) {
-                $composition = $compositions[$this->compositionKey($e->storageId, $e->path)];
-                foreach ($composition['composition'] as $mimetype => $size) {
-                    $rootComposition[$mimetype] = ($rootComposition[$mimetype] ?? 0) + $size;
-                }
-                return new UsageNode(
-                    name: $e->name,
-                    path: $e->name,
-                    size: $e->size,
-                    type: 'folder',
-                    mimetype: null,
-                    mtime: $e->mtime,
-                    fileCount: $composition['count'],
-                    composition: $composition['composition'],
-                    kind: $e->kind,
-                    displayName: $e->displayName,
-                );
-            }, $shown);
+            // No composition here: this is the one listing where a per-row
+            // subtree aggregate means scanning every account on the instance,
+            // and it is exactly what made the whole-server root slow to open.
+            // childComposition() serves it separately (see there).
+            $items = array_map(static fn (InstanceTopLevelEntry $e) => new UsageNode(
+                name: $e->name,
+                path: $e->name,
+                size: $e->size,
+                type: 'folder',
+                mimetype: null,
+                mtime: $e->mtime,
+                kind: $e->kind,
+                displayName: $e->displayName,
+            ), $shown);
 
             return [
-                // Composition here only reflects $shown (a truncated top-level
-                // list skips whatever's beyond $limit, same honesty tradeoff
-                // fileCount/size already accept elsewhere in this file) — good
-                // enough for a "what's using space" bar, not claimed as exact.
-                'root' => new UsageNode(name: '', path: '', size: $totalSize, type: 'folder', composition: $rootComposition),
+                'root' => new UsageNode(name: '', path: '', size: $totalSize, type: 'folder'),
                 'items' => $items,
                 'truncated' => $truncated,
             ];

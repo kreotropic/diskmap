@@ -1,5 +1,5 @@
 /**
- * SPDX-FileCopyrightText: 2026 Ricardo Ferreira <ricardo.ferreira@jofebar.com>
+ * SPDX-FileCopyrightText: 2026 Ricardo Ferreira <rsfneg@gmail.com>
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
@@ -36,6 +36,27 @@ export async function fetchMyOverview() {
  */
 export async function fetchChildren(scope, identifier, params = {}) {
 	const { data } = await axios.get(base('/api/v1/children'), {
+		params: { scope, identifier, ...params },
+	})
+	return data
+}
+
+/**
+ * Fetch the recursive aggregates (descendant file count + per-mimetype size
+ * breakdown) for the same level fetchChildren() returns, keyed by child name.
+ *
+ * Deliberately a second request rather than part of the first: it is the only
+ * read whose cost grows with the whole subtree instead of with the row limit,
+ * so the tree renders its rows from fetchChildren() and fills the two
+ * aggregate columns in when this answers. Pass the same path/limit as the
+ * fetchChildren() call it accompanies or the two describe different rows.
+ *
+ * @param {string} scope 'user' | 'teamfolder' | 'storage' | 'instance'
+ * @param {string|number} identifier uid, team folder id, or numeric storage id
+ * @param {object} params { path, limit }
+ */
+export async function fetchComposition(scope, identifier, params = {}) {
+	const { data } = await axios.get(base('/api/v1/composition'), {
 		params: { scope, identifier, ...params },
 	})
 	return data

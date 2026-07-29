@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 /**
- * SPDX-FileCopyrightText: 2026 Ricardo Ferreira <ricardo.ferreira@jofebar.com>
+ * SPDX-FileCopyrightText: 2026 Ricardo Ferreira <rsfneg@gmail.com>
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
@@ -38,9 +38,14 @@ interface IUsageSource {
     /**
      * The immediate (one level deep, not recursive) children of $scope's
      * path — both files and folders — ordered by size descending. Folder
-     * nodes carry their own recursive size total (already aggregated in
-     * filecache) and a recursive descendant file count (plan Phase 3b —
-     * a real query, not free, unlike size).
+     * nodes carry their own recursive size total, which is free: filecache
+     * already stores it aggregated.
+     *
+     * Deliberately cheap: every figure here comes from the rows themselves,
+     * so the cost is one indexed lookup bounded by $limit no matter how large
+     * the subtree below is. The recursive per-folder aggregates that used to
+     * be part of this response now live in childComposition(), which is where
+     * the "why is this folder taking seconds to open" cost actually was.
      *
      * @return array{
      *     root: ?UsageNode,   // the folder at $scope's own path, or null if unresolved
@@ -49,6 +54,28 @@ interface IUsageSource {
      * }
      */
     public function children(Scope $scope, int $limit): array;
+
+    /**
+     * The recursive aggregates for the same level children() returns:
+     * descendant file count and per-mimetype size breakdown, per immediate
+     * child folder plus the parent itself (plan Phase 3b + the "Composição"
+     * stacked bar).
+     *
+     * Separate from children() because it is the one read in this app whose
+     * cost is linear in the whole subtree rather than bounded by $limit —
+     * seconds on a large folder, against tens of milliseconds for the listing
+     * — so the UI fetches the two concurrently and fills these columns in
+     * when they arrive instead of holding the rows back for them.
+     *
+     * @param int $limit must match the children() call it accompanies: on the
+     *     whole-instance root this decides which top-level entries are
+     *     covered, and the parent aggregate reflects exactly those.
+     * @return array{
+     *     root: ?array{count: int, composition: array<string, int>}, // null if the scope doesn't resolve
+     *     items: array<string, array{count: int, composition: array<string, int>}>, // keyed by child name; folders only
+     * }
+     */
+    public function childComposition(Scope $scope, int $limit): array;
 
     /**
      * A recursive tree of $scope (files nested inside folders, like a real

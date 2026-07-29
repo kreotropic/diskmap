@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 /**
- * SPDX-FileCopyrightText: 2026 Ricardo Ferreira <ricardo.ferreira@jofebar.com>
+ * SPDX-FileCopyrightText: 2026 Ricardo Ferreira <rsfneg@gmail.com>
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
@@ -35,6 +35,12 @@ return [
 
         // One level of children (files + folders) under a scope+path — not recursive.
         ['name' => 'usage#children', 'url' => '/api/v1/children', 'verb' => 'GET'],
+
+        // The recursive file-count + mimetype breakdown for that same level.
+        // Split out of usage#children because it's the only read whose cost
+        // scales with the subtree rather than with the row limit — the tree
+        // pane renders the rows first and fills these two columns in after.
+        ['name' => 'usage#composition', 'url' => '/api/v1/composition', 'verb' => 'GET'],
 
         // Recursive, folder-nested tree for the map (Phase 3c) — files nested
         // inside folders, node-budgeted, so a folder click in the tree pane
