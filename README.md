@@ -240,51 +240,13 @@ vendor/bin/phpunit
 
 ### Cross-engine checks
 
-DiskMap supports MySQL/MariaDB and PostgreSQL, and the composition queries are
-the only place that distinction reaches the database.
+DiskMap runs on MySQL/MariaDB and on PostgreSQL, and
 `tests/Unit/FilecacheDialectTest.php` pins the SQL generated for each engine
-without needing a database at all, and is the first thing to run after touching
-any of it.
+without needing a database at all — run it after touching any of the
+composition queries.
 
-For a real end-to-end comparison there is a disposable instance per engine —
-PostgreSQL on port 8081, MariaDB on 8082 — each with its own project name,
-containers and volumes, so neither can disturb a development instance you
-actually use:
-
-```bash
-docker compose -p diskmap-pg -f build/docker-compose.pgsql.yml up -d
-docker compose -p diskmap-my -f build/docker-compose.mysql.yml up -d
-```
-
-Give both the identical fixture. `build/seed-fixture.php` writes a fixed tree
-(same names, sizes and mtimes every time — sparse files, so it costs no real
-disk) chosen to cover what the aggregation queries are sensitive to: non-ASCII
-folder names, the `.pst`/`.dwg` extensions the composition query rewrites, four
-levels of nesting, and a folder of many small files.
-
-```bash
-for c in diskmap-pg-app diskmap-my-app; do
-    docker exec -u www-data $c php occ app:enable diskmap
-    OC_PASS=fixture-pw docker exec -e OC_PASS -u www-data $c \
-        php occ user:add --password-from-env fixture
-    docker exec $c php /var/www/html/custom_apps/diskmap/build/seed-fixture.php fixture
-    docker exec -u www-data $c php occ files:scan fixture
-done
-```
-
-Then dump the app's output on each and diff the two. **Leave storage ids and
-fileids out of what you diff** — they differ between instances by construction
-and say nothing about the engine. Expect one legitimate difference: the account
-home's own `mtime` is the timestamp of its scan, so it varies unless both scans
-happened in the same second.
-
-Tear either one down with `down -v` (the `-v` matters — without it the volumes
-survive and the next `up` resumes the old instance):
-
-```bash
-docker compose -p diskmap-pg -f build/docker-compose.pgsql.yml down -v
-docker compose -p diskmap-my -f build/docker-compose.mysql.yml down -v
-```
+For an end-to-end comparison there is a disposable instance per engine, plus a
+deterministic fixture to give both. See [build/README.md](build/README.md).
 
 ### Frontend build
 
