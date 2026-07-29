@@ -173,6 +173,18 @@ export default {
 		identifier() {
 			this.load()
 		},
+		// The category filter and a focused folder are mutually exclusive:
+		// dimClass() can only honour one, and it gives the folder priority.
+		// Without this, picking a category while a folder is focused changed
+		// nothing on the map at all — the legend lit up and the map ignored
+		// it. Clearing the focus here is what makes the click do what it
+		// looks like it does. The other direction (focusing a folder clears
+		// the category) belongs to the views, which own activeCategory.
+		activeCategory(key) {
+			if (key !== null) {
+				this.highlightedFolderPath = null
+			}
+		},
 	},
 	mounted() {
 		this.load()

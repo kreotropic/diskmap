@@ -112,6 +112,10 @@ export default {
 			this.$refs.folderTree?.revealPath(path)
 		},
 		onSelectPath(payload) {
+			// Focusing a folder overrides the category filter on the map (see
+			// Treemap's dimClass), so drop the filter rather than leave the
+			// legend showing a category that no longer affects anything.
+			this.activeCategory = null
 			this.$refs.treemap?.focusPath(payload)
 		},
 		onToggleCategory(key) {

@@ -116,6 +116,8 @@ export default {
 			this.$refs.folderTree?.revealPath(path)
 		},
 		onSelectPath(payload) {
+			// See InstanceView: focus and category filter cannot both apply.
+			this.activeCategory = null
 			this.$refs.treemap?.focusPath(payload)
 		},
 		onToggleCategory(key) {
