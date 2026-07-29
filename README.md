@@ -124,10 +124,26 @@ requests rather than create them.
   added outside Nextcloud stay invisible until an `occ files:scan` records
   them. Every view shows the cache timestamp so you can judge freshness.
 
-- **MySQL/MariaDB only.** The aggregation queries use MySQL-specific syntax (an
-  index hint and backtick-quoted identifiers). This is declared as an app
-  dependency, so the app refuses to install on PostgreSQL or SQLite rather than
-  installing and then failing at runtime.
+- **No SQLite support.** MySQL/MariaDB and PostgreSQL are both supported and
+  tested; SQLite is declared out rather than left to fail at runtime, since the
+  path-segment expression the composition queries group by needs a third
+  spelling there that has no coverage.
+
+- **On PostgreSQL, composition queries scan a whole storage rather than just
+  the subtree.** Not a difference in the SQL: Nextcloud's own
+  `fs_storage_path_prefix` index is a `(storage, path(64))` prefix index, which
+  PostgreSQL has no equivalent for, so core deliberately skips creating it
+  there (there is an explicit PostgreSQL exclusion around it in core's
+  `AddMissingIndicesListener`, so `occ db:add-missing-indices` will not add it
+  either). With
+  nothing to range-scan, folder composition costs time proportional to the
+  account or team folder it lives in instead of to the folder itself. Results
+  are identical either way, and the per-folder cache absorbs repeat visits.
+  Measured on a synthetic 300k-row storage: 51 ms to break down a 300-file
+  folder (MySQL does it in a few ms), but 176 ms to break down all 301k rows,
+  where MySQL takes 1421 ms — a parallel scan wins whenever the answer needs
+  every row anyway. See the PostgreSQL performance note under
+  [Requirements](#requirements) if you want the bounded behaviour back.
 
 - **Team-folder and whole-server views are administrator-only.** A user
   restricted by advanced ACL to part of a team folder must never learn the
@@ -167,12 +183,40 @@ and regenerate the matching `l10n/<locale>.js` with `python3 build/l10n.py`.
 
 ## Requirements
 
-- Nextcloud 32–33
-- PHP 8.1 or later
-- MySQL or MariaDB
+- Nextcloud 32–34
+- PHP 8.1 or later (tested up to PHP 8.5, which Nextcloud 34 ships with)
+- MySQL/MariaDB or PostgreSQL (not SQLite)
 - Redis or Memcached recommended — account display names are read through
   Nextcloud's distributed cache, which is what keeps the whole-server view
   cheap on instances with many accounts
+
+### Optional: PostgreSQL index for large instances
+
+DiskMap works on PostgreSQL with no setup. But because core has no
+`fs_storage_path_prefix` index there (see [Known
+Limitations](#known-limitations)), every folder-composition query scans the
+whole storage it belongs to. On a large instance you can restore the bounded
+behaviour by adding an index PostgreSQL *can* use for prefix matching:
+
+```sql
+CREATE INDEX CONCURRENTLY fs_storage_path_pattern
+    ON oc_filecache (storage, path varchar_pattern_ops);
+```
+
+`varchar_pattern_ops` is the part that matters — a plain index on the same
+columns will not serve `LIKE 'folder/%'` unless the database was created with
+the `C` collation.
+
+Measured on a synthetic 300k-row storage, breaking down one 300-file folder
+went from **51 ms to 3.0 ms**, and a whole 6k-descendant level from 34 ms to
+22 ms. Whole-storage aggregates are unaffected: they read every row regardless,
+and PostgreSQL correctly keeps using a parallel scan for those. The index cost
+about 17 MB against a 62 MB table.
+
+This is left to administrators on purpose. `oc_filecache` belongs to Nextcloud
+core, not to this app, so DiskMap will not add or drop indexes on it — and
+`CONCURRENTLY` keeps the creation from locking the table on a live instance.
+Drop it again at any time with `DROP INDEX CONCURRENTLY fs_storage_path_pattern;`
 
 ## License
 
@@ -192,6 +236,54 @@ Development dependencies (PHPUnit) are not shipped — install them first:
 ```bash
 composer install
 vendor/bin/phpunit
+```
+
+### Cross-engine checks
+
+DiskMap supports MySQL/MariaDB and PostgreSQL, and the composition queries are
+the only place that distinction reaches the database.
+`tests/Unit/FilecacheDialectTest.php` pins the SQL generated for each engine
+without needing a database at all, and is the first thing to run after touching
+any of it.
+
+For a real end-to-end comparison there is a disposable instance per engine —
+PostgreSQL on port 8081, MariaDB on 8082 — each with its own project name,
+containers and volumes, so neither can disturb a development instance you
+actually use:
+
+```bash
+docker compose -p diskmap-pg -f build/docker-compose.pgsql.yml up -d
+docker compose -p diskmap-my -f build/docker-compose.mysql.yml up -d
+```
+
+Give both the identical fixture. `build/seed-fixture.php` writes a fixed tree
+(same names, sizes and mtimes every time — sparse files, so it costs no real
+disk) chosen to cover what the aggregation queries are sensitive to: non-ASCII
+folder names, the `.pst`/`.dwg` extensions the composition query rewrites, four
+levels of nesting, and a folder of many small files.
+
+```bash
+for c in diskmap-pg-app diskmap-my-app; do
+    docker exec -u www-data $c php occ app:enable diskmap
+    OC_PASS=fixture-pw docker exec -e OC_PASS -u www-data $c \
+        php occ user:add --password-from-env fixture
+    docker exec $c php /var/www/html/custom_apps/diskmap/build/seed-fixture.php fixture
+    docker exec -u www-data $c php occ files:scan fixture
+done
+```
+
+Then dump the app's output on each and diff the two. **Leave storage ids and
+fileids out of what you diff** — they differ between instances by construction
+and say nothing about the engine. Expect one legitimate difference: the account
+home's own `mtime` is the timestamp of its scan, so it varies unless both scans
+happened in the same second.
+
+Tear either one down with `down -v` (the `-v` matters — without it the volumes
+survive and the next `up` resumes the old instance):
+
+```bash
+docker compose -p diskmap-pg -f build/docker-compose.pgsql.yml down -v
+docker compose -p diskmap-my -f build/docker-compose.mysql.yml down -v
 ```
 
 ### Frontend build

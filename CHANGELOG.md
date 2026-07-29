@@ -11,6 +11,22 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- **Nextcloud 34 support** (`max-version` raised from 33), verified on both
+  engines. On PostgreSQL upgraded 33 → 34, every read path produced output
+  byte-identical to the same instance before the upgrade; on a fresh MariaDB 34
+  install, output was in turn identical to PostgreSQL 34 over the same fixture.
+  The unit suite passes on the PHP 8.5 that Nextcloud 34 ships, and both views
+  render on both engines with no application console errors. Core's
+  `fs_storage_path_prefix` index is unchanged in 34 and confirmed present on a
+  new MariaDB 34 install, which matters because MySQL raises an error — not a
+  warning — when `USE INDEX` names an index that does not exist.
+- **PostgreSQL support.** The three composition queries were the app's only
+  raw SQL and its only MySQL-specific code; they now generate portable SQL,
+  with the two genuinely engine-specific pieces (an index hint MySQL
+  understands, and the "first N path segments" grouping expression) behind a
+  single seam. Verified by running every read path over a byte-identical
+  fixture on a MariaDB and a PostgreSQL instance of the same Nextcloud version
+  and diffing the output: identical across all 253 lines.
 - Admin team-folder overview: used/quota with occupancy %, files/trash/versions
   breakdown, and linked groups/teams — resolved directly from `oc_filecache`
   and `oc_storages`, with no filesystem scan.
@@ -29,6 +45,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   layout transparently.
 
 ### Fixed
+- Every view that touches team folders crashed with an SQL error on any
+  instance without the Team Folders (groupfolders) app installed. DiskMap reads
+  that app's tables directly by design, but never checked whether they exist —
+  and on an instance that never installed it, they do not. The whole-server
+  view and the team-folder overview now treat "no Team Folders app" as "no team
+  folders". Found while testing on a clean PostgreSQL instance; it was never
+  engine-specific.
 - Opening a folder on the whole-server view took seconds. The recursive
   per-folder aggregates behind the "Composition" and "File count" columns are
   the only read whose cost grows with the whole subtree — measured at 1.4 s for

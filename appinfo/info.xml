@@ -44,13 +44,15 @@ reflects what Nextcloud's cache knows, not a live disk read.
 
     <dependencies>
         <php min-version="8.1"/>
-        <!-- The aggregation queries are MySQL/MariaDB-specific (a USE INDEX
-             hint and backtick-quoted identifiers in the composition query),
-             and the app has no PostgreSQL/SQLite coverage. Declaring it keeps
-             the app off instances where every view would 500 rather than
-             letting it install and fail at runtime. -->
+        <!-- The composition queries are the app's only raw SQL and its only
+             dialect-dependent surface; FilecacheUsageSource::isPostgres()
+             documents what differs. SQLite is deliberately still excluded:
+             it needs a third spelling of the same path-segment expression and
+             has no coverage, so declaring only what is tested keeps the app
+             off instances where every view would 500. -->
         <database>mysql</database>
-        <nextcloud min-version="32" max-version="33"/>
+        <database>pgsql</database>
+        <nextcloud min-version="32" max-version="34"/>
     </dependencies>
 
     <navigations>

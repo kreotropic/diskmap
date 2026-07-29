@@ -1,0 +1,52 @@
+# SPDX-FileCopyrightText: 2026 Ricardo Ferreira <rsfneg@gmail.com>
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Disposable MariaDB Nextcloud instance, the counterpart to
+# docker-compose.pgsql.yml. Together they let the same fixture be compared
+# across both supported engines on the same Nextcloud version — see
+# "Cross-engine checks" in README.md.
+#
+# Kept separate from any long-lived development instance on purpose: its own
+# project name, container names, port and volumes, so bringing it up or tearing
+# it down can never touch one you actually use.
+services:
+  db:
+    image: mariadb:10.11
+    container_name: diskmap-my-db
+    restart: unless-stopped
+    command: --transaction-isolation=READ-COMMITTED --binlog-format=ROW
+    volumes:
+      - mydb:/var/lib/mysql
+    environment:
+      - MYSQL_ROOT_PASSWORD=nextcloud
+      - MYSQL_PASSWORD=nextcloud
+      - MYSQL_DATABASE=nextcloud
+      - MYSQL_USER=nextcloud
+
+  app:
+    # Keep this in step with the instance you compare against: identical
+    # Nextcloud versions are what make the two outputs diffable. Nextcloud
+    # refuses to start on a *lower* version than its data already has, so
+    # lowering this against an existing instance means `down -v` first.
+    image: nextcloud:34-apache
+    container_name: diskmap-my-app
+    restart: unless-stopped
+    ports:
+      - 8082:80
+    depends_on:
+      - db
+    volumes:
+      - mynextcloud:/var/www/html
+      - ..:/var/www/html/custom_apps/diskmap
+    environment:
+      - MYSQL_HOST=db
+      - MYSQL_DATABASE=nextcloud
+      - MYSQL_USER=nextcloud
+      - MYSQL_PASSWORD=nextcloud
+      - NEXTCLOUD_ADMIN_USER=ncadmin
+      - NEXTCLOUD_ADMIN_PASSWORD=diskmap-mysql-verify
+      - NEXTCLOUD_TRUSTED_DOMAINS=localhost
+
+volumes:
+  mydb:
+  mynextcloud:

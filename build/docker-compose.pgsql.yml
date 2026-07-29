@@ -1,0 +1,48 @@
+# SPDX-FileCopyrightText: 2026 Ricardo Ferreira <rsfneg@gmail.com>
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# A disposable PostgreSQL Nextcloud instance for checking that DiskMap behaves
+# identically on both supported engines. See "Cross-engine checks" in README.md.
+#
+# Only the app directory itself is mounted, so this instance stays independent
+# of whatever else lives in your apps/ folder.
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: diskmap-pg-db
+    restart: unless-stopped
+    volumes:
+      - pgdb:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_DB=nextcloud
+      - POSTGRES_USER=nextcloud
+      - POSTGRES_PASSWORD=nextcloud
+
+  app:
+    # Keep this in step with the instance you compare against: identical
+    # Nextcloud versions are what make the two outputs diffable. Change it to
+    # whichever supported version you are testing — but note Nextcloud refuses
+    # to start on a *lower* version than the data already has, so lowering this
+    # against an existing instance means recreating it (`down -v`) first.
+    image: nextcloud:34-apache
+    container_name: diskmap-pg-app
+    restart: unless-stopped
+    ports:
+      - 8081:80
+    depends_on:
+      - db
+    volumes:
+      - pgnextcloud:/var/www/html
+      - ..:/var/www/html/custom_apps/diskmap
+    environment:
+      - POSTGRES_HOST=db
+      - POSTGRES_DB=nextcloud
+      - POSTGRES_USER=nextcloud
+      - POSTGRES_PASSWORD=nextcloud
+      - NEXTCLOUD_ADMIN_USER=ncadmin
+      - NEXTCLOUD_ADMIN_PASSWORD=diskmap-pgsql-verify
+      - NEXTCLOUD_TRUSTED_DOMAINS=localhost
+
+volumes:
+  pgdb:
+  pgnextcloud:

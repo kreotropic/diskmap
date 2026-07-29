@@ -660,8 +660,8 @@ class FilecacheUsageSource implements IUsageSource {
      * This is the single-folder form, now only reached by
      * compositionsForEntries()' collision fallback — the listing paths go
      * through compositionByChild() (whole level, one query) or the cache in
-     * front of it. Its cost is linear in the subtree: measured 4.5 ms over
-     * 1k descendants, 57 ms over 15k, 1421 ms over 300k, which is why no
+     * front of it. On MySQL its cost is linear in the subtree: measured 4.5 ms
+     * over 1k descendants, 57 ms over 15k, 1421 ms over 300k, which is why no
      * request calls it once per row any more.
      *
      * Deliberately one query per folder with a literal path, NOT a
@@ -676,6 +676,26 @@ class FilecacheUsageSource implements IUsageSource {
      * table even with the hint, and only FORCE INDEX would forbid that).
      * Leaving it as a hint is deliberate: on a table small enough for the
      * optimizer to prefer a scan, the scan really is cheaper.
+     *
+     * PostgreSQL reaches a different plan, and the reason is not the SQL: the
+     * fs_storage_path_prefix index does not exist there. It is a
+     * (storage, path(64)) prefix index, which PostgreSQL has no equivalent
+     * for, so core skips it explicitly rather than by accident — see the
+     * `getDatabaseProvider() !== PLATFORM_POSTGRES` guard around it in core's
+     * AddMissingIndicesListener (still present and unchanged in NC 34).
+     * With nothing to range-scan, every form here becomes a parallel seq scan
+     * filtered on the LIKE, so cost tracks the size of the whole storage
+     * rather than the subtree. Measured on a synthetic 300k-row storage:
+     * aggregating one 300-file folder took 51 ms (against MySQL's few ms —
+     * it scans everything to find those 300), while aggregating all 301k rows
+     * took 176 ms, comfortably *beating* MySQL's 1421 ms since a parallel scan
+     * is the right plan when the answer needs every row anyway. Both are
+     * bounded by one storage, and CompositionCache fronts them, so this is a
+     * real difference but not a pathological one. An admin who wants the
+     * bounded behaviour back can add a pattern-ops index by hand — see the
+     * PostgreSQL note in README.md, which carries the exact statement and the
+     * before/after numbers. The app deliberately does not create it:
+     * oc_filecache is core's table, not this app's, to migrate.
      *
      * @return array{count: int, composition: array<string, int>} composition
      *     maps mimetype string ("image/png") to summed size — categorizing
@@ -697,6 +717,61 @@ class FilecacheUsageSource implements IUsageSource {
                         ELSE m.mimetype
                     END";
 
+    /**
+     * The three composition queries below are the only raw SQL in the app —
+     * everything else goes through the portable QueryBuilder — and so are its
+     * entire dialect-dependent surface. Two differences separate MySQL/MariaDB
+     * from PostgreSQL here, one per helper below; the rest of the SQL is
+     * spelled so both engines read it the same way:
+     *
+     *  - identifiers are left unquoted (backticks are MySQL-only syntax, and
+     *    these all-lowercase names need no quoting on either engine);
+     *  - GROUP BY repeats the full expression instead of naming the SELECT
+     *    alias. MySQL resolves an alias there, but PostgreSQL prefers input
+     *    columns, and `mimetype` is one on both sides of the join — it would
+     *    be rejected as ambiguous rather than silently grouping by the wrong
+     *    thing. Repeating costs nothing since the expressions bind no
+     *    parameters.
+     *
+     * Non-strict getDatabaseProvider() is what we want: it reports MariaDB as
+     * PLATFORM_MYSQL, and the SQL genuinely is the same for both.
+     */
+    private function isPostgres(): bool {
+        return $this->db->getDatabaseProvider() === IDBConnection::PLATFORM_POSTGRES;
+    }
+
+    /**
+     * Biases MySQL's optimizer toward the (storage, path) range scan these
+     * queries are built around — see recursiveComposition() for what the hint
+     * does and, more importantly, does not guarantee. PostgreSQL has no
+     * index-hint syntax at all (the query would not parse), so it gets none
+     * and relies on the planner reaching fs_storage_path_prefix by itself.
+     */
+    private function pathPrefixIndexHint(): string {
+        return $this->isPostgres() ? '' : ' USE INDEX (fs_storage_path_prefix)';
+    }
+
+    /**
+     * SQL for "the first $segments segments of f.path" — the grouping key
+     * compositionByChild() attributes each descendant to its own top-level
+     * ancestor with.
+     *
+     * The two spellings agree on the case that matters: given fewer than
+     * $segments segments, both return the path unchanged rather than padding
+     * or failing.
+     *
+     * $segments is inlined rather than bound. It comes from substr_count() so
+     * it is provably an integer, and inlining keeps the expression repeatable
+     * in GROUP BY without a duplicate parameter — while also sidestepping
+     * PostgreSQL having to accept a bound parameter as an array subscript.
+     */
+    private function firstPathSegmentsExpr(int $segments): string {
+        if ($this->isPostgres()) {
+            return "array_to_string((string_to_array(f.path, '/'))[1:" . $segments . "], '/')";
+        }
+        return "SUBSTRING_INDEX(f.path, '/', " . $segments . ')';
+    }
+
     private function recursiveComposition(int $storageId, string $path, int $size): array {
         // A folder's own aggregate size already tells us whether it has any
         // descendants at all — skip the query for an empty folder.
@@ -714,10 +789,10 @@ class FilecacheUsageSource implements IUsageSource {
 
         $sql = 'SELECT ' . self::COMPOSITION_MIMETYPE_CASE . ' AS mimetype,
                     COUNT(*) AS c, SUM(f.size) AS total
-                FROM `*PREFIX*filecache` f USE INDEX (fs_storage_path_prefix)
-                LEFT JOIN `*PREFIX*mimetypes` m ON f.mimetype = m.id
+                FROM *PREFIX*filecache f' . $this->pathPrefixIndexHint() . '
+                LEFT JOIN *PREFIX*mimetypes m ON f.mimetype = m.id
                 WHERE f.storage = ? AND f.path LIKE ? AND f.mimetype != ?
-                GROUP BY mimetype';
+                GROUP BY ' . self::COMPOSITION_MIMETYPE_CASE;
         $result = $this->db->executeQuery($sql, [$storageId, $likePattern, $folderMimetypeId]);
 
         $count = 0;
@@ -852,11 +927,11 @@ class FilecacheUsageSource implements IUsageSource {
 
         $sql = 'SELECT f.storage, ' . self::COMPOSITION_MIMETYPE_CASE . ' AS mimetype,
                     COUNT(*) AS c, SUM(f.size) AS total
-                FROM `*PREFIX*filecache` f USE INDEX (fs_storage_path_prefix)
-                LEFT JOIN `*PREFIX*mimetypes` m ON f.mimetype = m.id
+                FROM *PREFIX*filecache f' . $this->pathPrefixIndexHint() . '
+                LEFT JOIN *PREFIX*mimetypes m ON f.mimetype = m.id
                 WHERE f.storage IN (' . implode(',', array_fill(0, count($storageIds), '?')) . ')
                     AND f.mimetype != ?' . $pathClause . '
-                GROUP BY f.storage, mimetype';
+                GROUP BY f.storage, ' . self::COMPOSITION_MIMETYPE_CASE;
 
         $result = $this->db->executeQuery($sql, $params);
         $byStorage = [];
@@ -886,19 +961,16 @@ class FilecacheUsageSource implements IUsageSource {
      * fifteen times. It is the cache above it that removes the cost; this
      * only makes the miss cheaper.
      *
-     * Attribution is by segment count, not by string offset: SUBSTRING_INDEX
-     * with a count of (depth of $path) + 1 truncates every descendant's path
-     * to its own top-level ancestor under $path, which IS that child's full
-     * path — so the grouping key needs no arithmetic over the parent prefix
-     * and, unlike a SUBSTRING(path, <offset>) form, cannot be thrown off by
-     * the difference between PHP's byte offsets and MySQL's character ones on
-     * a non-ASCII folder name.
+     * Attribution is by segment count, not by string offset: truncating every
+     * descendant's path to its first (depth of $path) + 1 segments leaves its
+     * own top-level ancestor under $path, which IS that child's full path — so
+     * the grouping key needs no arithmetic over the parent prefix and, unlike
+     * a SUBSTRING(path, <offset>) form, cannot be thrown off by the difference
+     * between PHP's byte offsets and the database's character ones on a
+     * non-ASCII folder name.
      *
-     * SUBSTRING_INDEX is MySQL-specific, matching the <database>mysql</database>
-     * this app declares in info.xml. A PostgreSQL/SQLite port needs an
-     * equivalent "first N segments" expression here (SPLIT_PART composition on
-     * PostgreSQL; SUBSTR/INSTR on SQLite) — this method and the two queries
-     * above it are the app's entire dialect-dependent surface.
+     * That truncation has no spelling both supported engines share, so it
+     * comes from firstPathSegmentsExpr() — see the dialect note there.
      *
      * @return array<string, array{count: int, composition: array<string, int>}>
      *     keyed by the child's full filecache path
@@ -909,15 +981,17 @@ class FilecacheUsageSource implements IUsageSource {
         $childSegments = ($path === '' ? 0 : substr_count($path, '/') + 1) + 1;
         $likePattern = $path !== '' ? $this->db->escapeLikeParameter($path) . '/%' : '%';
 
-        $sql = 'SELECT SUBSTRING_INDEX(f.path, \'/\', ?) AS child,
+        $childExpr = $this->firstPathSegmentsExpr($childSegments);
+
+        $sql = 'SELECT ' . $childExpr . ' AS child,
                     ' . self::COMPOSITION_MIMETYPE_CASE . ' AS mimetype,
                     COUNT(*) AS c, SUM(f.size) AS total
-                FROM `*PREFIX*filecache` f USE INDEX (fs_storage_path_prefix)
-                LEFT JOIN `*PREFIX*mimetypes` m ON f.mimetype = m.id
+                FROM *PREFIX*filecache f' . $this->pathPrefixIndexHint() . '
+                LEFT JOIN *PREFIX*mimetypes m ON f.mimetype = m.id
                 WHERE f.storage = ? AND f.path LIKE ? AND f.mimetype != ?
-                GROUP BY child, mimetype';
+                GROUP BY ' . $childExpr . ', ' . self::COMPOSITION_MIMETYPE_CASE;
 
-        $result = $this->db->executeQuery($sql, [$childSegments, $storageId, $likePattern, $this->folderMimetypeId()]);
+        $result = $this->db->executeQuery($sql, [$storageId, $likePattern, $this->folderMimetypeId()]);
 
         $byChild = [];
         while ($row = $result->fetch()) {
