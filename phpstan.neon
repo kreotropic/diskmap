@@ -1,0 +1,27 @@
+# SPDX-FileCopyrightText: 2026 Ricardo Ferreira <rsfneg@gmail.com>
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+parameters:
+    paths:
+        - lib
+    level: 5
+    # The OCP interfaces DiskMap codes against are dev-only stubs
+    # (nextcloud/ocp), not a runtime dependency — PHPStan needs them on the
+    # classmap to resolve OCP\* at all.
+    scanDirectories:
+        - vendor/nextcloud/ocp
+
+    ignoreErrors:
+        # OCP annotates IDBConnection::executeQuery()'s $params as string[],
+        # but it is a thin pass-through to DBAL, which takes a list of mixed
+        # and binds each value by its inferred type. The two call sites here
+        # bind a storage id and a mimetype id as integers on purpose: these
+        # are the index-sensitive composition queries, verified to produce
+        # byte-identical output on MariaDB and PostgreSQL, and casting the
+        # ids to string to satisfy a too-narrow annotation would change how
+        # they are bound for no gain. Scoped to this one method so any other
+        # parameter-type mismatch still fails the build.
+        -
+            identifier: argument.type
+            message: '#executeQuery\(\) expects array<string>#'
+            path: lib/Usage/FilecacheUsageSource.php

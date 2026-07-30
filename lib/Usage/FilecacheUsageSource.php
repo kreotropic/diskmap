@@ -1051,6 +1051,13 @@ class FilecacheUsageSource implements IUsageSource {
             Scope::TYPE_STORAGE => [(int)$scope->identifier, $scope->path],
             Scope::TYPE_USER => $this->userRoot($scope->identifier, $scope->path),
             Scope::TYPE_TEAM_FOLDER => $this->teamFolderRoot((int)$scope->identifier, $scope->path),
+            // The instance scope spans every storage at once, so it has no
+            // single (storage, path) root — InstanceIndex handles it before
+            // anything gets here. Falling through to match's implicit
+            // \UnhandledMatchError would turn that into a 500; null is the
+            // documented "no known storage" answer and every caller already
+            // renders it as an empty result.
+            default => null,
         };
     }
 

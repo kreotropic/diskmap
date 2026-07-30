@@ -33,6 +33,8 @@ jobs:
         run: find lib -name '*.php' -print0 | xargs -0 -n1 php -l
       - name: Install dev dependencies
         run: composer install --no-interaction --prefer-dist
+      - name: Static analysis
+        run: vendor/bin/phpstan analyse --no-progress
       - name: Unit tests
         run: vendor/bin/phpunit -c phpunit.xml
 
@@ -46,3 +48,14 @@ jobs:
           node-version: '20'
       - run: npm ci
       - run: npm run build
+      # js/ is committed and is what the app actually serves — the tarball
+      # ships it and never runs webpack. A bundle left behind by an edit to
+      # src/ would silently ship stale UI, so the build output has to match
+      # what is checked in. Verified reproducible byte-for-byte on the pinned
+      # node/npm from package.json "engines" with a package-lock install.
+      - name: Committed bundle is up to date with src/
+        run: |
+          git diff --exit-code -- js/ || {
+            echo "::error::js/ is stale — run 'npm run build' and commit the result."
+            exit 1
+          }

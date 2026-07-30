@@ -20,7 +20,7 @@ final class UsageNode implements \JsonSerializable {
      *     non-null array (possibly empty) means this folder's own tile is
      *     replaced by these children in the map (WinDirStat-style: an
      *     expanded folder is a spatial container, not a tile itself).
-     * @param int|null $countExact For a synthetic 'other' node folding many
+     * @param bool|null $countExact For a synthetic 'other' node folding many
      *     small files together: true if $fileCount is the exact number
      *     folded in, false if more exist beyond what was fetched (so the
      *     frontend should render it as a "N+" lower bound). Null for every

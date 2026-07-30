@@ -207,7 +207,7 @@ class LayoutDetector {
         $row = $result->fetch();
         $result->closeCursor();
 
-        return $row !== false && $row !== null;
+        return $row !== false;
     }
 
     /**

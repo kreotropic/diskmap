@@ -3,9 +3,14 @@
     "description": "See where your storage is going — treemap and top consumers, instance-wide",
     "license": "AGPL-3.0-or-later",
     "require-dev": {
-        "nextcloud/ocp": "^33.0",
+        "nextcloud/ocp": "^34.0",
         "phpunit/phpunit": "^10.0",
-        "doctrine/dbal": "^4.0"
+        "doctrine/dbal": "^4.0",
+        "phpstan/phpstan": "^2.2"
+    },
+    "scripts": {
+        "test": "@php vendor/bin/phpunit -c phpunit.xml",
+        "lint": "@php vendor/bin/phpstan analyse"
     },
     "autoload": {
         "psr-4": {
