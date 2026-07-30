@@ -87,3 +87,115 @@ docker compose -p diskmap-my -f build/docker-compose.mysql.yml down -v
 Note that Nextcloud refuses to start on a *lower* version than its data already
 has, so lowering the `image:` in a compose file against an existing instance
 means tearing it down first.
+
+## Releasing to the App Store
+
+Signing needs the app certificate. `~/.nextcloud/certificates/` already holds
+`diskmap.key` and `diskmap.csr`; `diskmap.crt` arrives when the request at
+[app-certificate-requests#1125](https://github.com/nextcloud/app-certificate-requests/pull/1125)
+is merged, as a file committed into that repository. That directory is the path
+`krankerl sign` looks in, which is why the key lives there rather than anywhere
+tidier. **The key is not backed up anywhere** — it signs every future release,
+and losing it means requesting a new certificate and disclosing the loss.
+
+### 1. Pre-flight
+
+`krankerl package` archives the **committed** tree, not the working copy —
+neither uncommitted edits to tracked files nor untracked files reach the
+tarball. That is a useful property (a release always corresponds to a commit)
+with one sharp edge: forget to commit and it silently packages the previous
+version. So commit first, then check `git status` is clean.
+
+Bump `version` in `appinfo/info.xml` (and `package.json`, kept in step), and
+give the new version its own `CHANGELOG.md` section — the App Store reads the
+section matching the release version, so a heading that does not match ships an
+empty changelog.
+
+```bash
+vendor/bin/phpunit -c phpunit.xml
+vendor/bin/phpstan analyse
+python3 build/l10n.py --check
+reuse lint
+npm ci && npm run build && git diff --exit-code -- js/
+```
+
+### 2. Package
+
+```bash
+krankerl package
+tar tzf build/artifacts/diskmap.tar.gz | wc -l          # 36 at 0.1.0
+tar xzf build/artifacts/diskmap.tar.gz -O diskmap/appinfo/info.xml | grep '<version>'
+```
+
+Check the version inside the tarball rather than trusting the working copy —
+it is the one place the "packages HEAD" behaviour shows up as a wrong answer.
+
+### 3. Sign the packaged content, not the working tree
+
+**The trap worth knowing before you hit it:** running `integrity:sign-app`
+against `apps/diskmap` hashes the whole development directory — `src/`,
+`tests/`, `node_modules/`, `vendor/` — none of which ship. The signature would
+then list files the installed app does not have, and `integrity:check-app`
+fails on every one. Sign an extracted copy of the tarball, so the hashes cover
+exactly the shipped file set.
+
+```bash
+docker cp build/artifacts/diskmap.tar.gz nextcloud-app:/tmp/
+docker cp ~/.nextcloud/certificates/diskmap.key nextcloud-app:/tmp/
+docker cp ~/.nextcloud/certificates/diskmap.crt nextcloud-app:/tmp/
+docker exec nextcloud-app sh -c '
+    cd /tmp && rm -rf signroot && mkdir signroot &&
+    tar xzf diskmap.tar.gz -C signroot &&
+    chown -R www-data:www-data signroot diskmap.key diskmap.crt'
+
+docker exec -u www-data nextcloud-app php /var/www/html/occ integrity:sign-app \
+    --privateKey=/tmp/diskmap.key \
+    --certificate=/tmp/diskmap.crt \
+    --path=/tmp/signroot/diskmap
+
+docker exec nextcloud-app sh -c 'cd /tmp/signroot && tar czf /tmp/diskmap-signed.tar.gz diskmap'
+docker cp nextcloud-app:/tmp/diskmap-signed.tar.gz build/artifacts/
+docker exec nextcloud-app sh -c 'rm -rf /tmp/signroot /tmp/diskmap.key /tmp/diskmap.crt /tmp/diskmap.tar.gz'
+```
+
+The `chown` matters: `occ` has to run as `www-data` (it refuses to run as root),
+and `docker cp` leaves the key owned by root and mode 600. The final `rm`
+matters for the same reason the key lives outside every repository.
+
+### 4. Verify
+
+`appinfo/signature.json` is now inside `diskmap-signed.tar.gz`. Prove it before
+publishing, by installing that tarball on a disposable instance (the
+cross-engine compose files above are already disposable) and asking Nextcloud
+itself:
+
+```bash
+docker exec -u www-data <container> php occ integrity:check-app diskmap
+```
+
+Empty output means the signature covers exactly what is installed. Anything
+else lists the offending files and means step 3 signed the wrong tree.
+
+### 5. Publish
+
+Upload `diskmap-signed.tar.gz` at <https://apps.nextcloud.com> — the account
+signs in with GitHub, and the first upload is what creates the app's store
+page. Screenshots come from the `<screenshot>` URLs in `info.xml`, served from
+this repository, so they must already be pushed.
+
+### Automating it later
+
+`krankerl publish <url>` does **not** upload anything: it registers a release
+against `https://apps.nextcloud.com/api/v1/apps/releases`, and the store then
+fetches the tarball from the URL you hand it. So automation means publishing
+the tarball somewhere public first — normally a GitHub release asset — which is
+the actual shape of the "GitHub → App Store" integration. `krankerl login
+--appstore <token>` and `--github <token>` store both credentials in
+krankerl's own config file **in plaintext**.
+
+Deliberately not used for the first release: krankerl's last release is
+0.14.0 from December 2022, and what its `sign --package` produces is
+undocumented — it takes only the private key, so it is not the
+`appinfo/signature.json` that step 3 builds. Worth revisiting once there is a
+certificate to test against, at which point the honest comparison is a plain
+`curl` to that API endpoint versus a four-year-old dependency.
