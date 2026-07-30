@@ -15,6 +15,7 @@ working on DiskMap, not for running it.
 | `docker-compose.pgsql.yml` | Disposable PostgreSQL Nextcloud instance, port 8081. |
 | `docker-compose.mysql.yml` | Disposable MariaDB Nextcloud instance, port 8082. |
 | `seed-fixture.php` | Writes a deterministic file tree into one account's home. |
+| `dump-readpaths.php` | Prints every read path over that tree, normalised so two instances can be diffed. |
 
 `l10n.py` is the routine one and its commands live in the main README's
 *Translations build* section, so they stay in one place. The rest of this file
@@ -54,14 +55,25 @@ for c in diskmap-pg-app diskmap-my-app; do
 done
 ```
 
-Then dump the app's output on each and diff the two.
+Then dump each instance's output and diff the two. `dump-readpaths.php` walks
+every folder of the fixture at every depth — sizes, counts, per-mimetype
+composition, listing order and the shape of the map tree — and never prints
+storage ids or file ids, which come from auto-increment and sequences and so
+differ between instances by construction:
 
-Two things to know before you trust a diff. **Leave storage ids and fileids out
-of what you compare** — they come from auto-increment and sequences, so they
-differ between instances by construction and say nothing about the engine. And
-expect one legitimate difference: the account home's own `mtime` is the
-timestamp of its scan, so it varies unless both scans landed in the same
-second.
+```bash
+for c in diskmap-pg-app diskmap-my-app; do
+    docker exec -u www-data $c \
+        php /var/www/html/custom_apps/diskmap/build/dump-readpaths.php fixture > "$c.txt"
+done
+diff diskmap-pg-app.txt diskmap-my-app.txt
+```
+
+Expect exactly one legitimate difference: the account home's own `mtime` is the
+timestamp of its `files:scan`, so it varies unless both scans landed in the
+same second. It shows up as four lines. Everything the fixture itself owns
+carries a fixed mtime and must match exactly — if anything else differs, that
+is a real finding.
 
 Tear either instance down with `down -v`. The `-v` matters: without it the
 volumes survive and the next `up` resumes the old instance rather than building
