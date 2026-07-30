@@ -283,8 +283,13 @@ Pull requests welcome! Please open an issue first to discuss significant changes
 
 *The snapshots above show the admin whole-server view, the per-user personal
 view, a team folder broken down by folder and file type, and the tree→map sync
-lighting up one account's region while dimming the rest. These images are
-picked up by the App Store crawler to showcase the app.*
+lighting up one account's region while dimming the rest.*
+
+These same four files are what the App Store shows on the app's page, but it
+reads them from the `<screenshot>` URLs in `appinfo/info.xml` — it does not
+crawl this README. They are served straight from this repository, since
+`screenshots/` is excluded from the release tarball, so renaming or moving one
+breaks the store page: update `info.xml` alongside it.
 
 ## Changelog
 

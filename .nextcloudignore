@@ -21,6 +21,7 @@ js/*.map
 tests
 phpunit.xml
 .phpunit.result.cache
+phpstan.neon
 .github
 
 # Dev tooling & repo metadata
@@ -29,9 +30,11 @@ phpunit.xml
 .nextcloudignore
 .vscode
 krankerl.toml
-.reuse
-REUSE.toml
 l10n/*.bak
+
+# .reuse/ and REUSE.toml deliberately stay IN the tarball: the licensing of
+# js/*.js, l10n/*.js and img/*.svg is declared there rather than in-file, so
+# dropping them would make the shipped artifact non-REUSE-compliant on its own.
 
 # Docs assets only needed on GitHub / the App Store crawler
 screenshots

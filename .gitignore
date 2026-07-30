@@ -5,3 +5,6 @@
 /vendor/
 /js/*.map
 /.phpunit.result.cache
+
+# krankerl writes release tarballs here, inside the app's own build/ dir.
+/build/artifacts/

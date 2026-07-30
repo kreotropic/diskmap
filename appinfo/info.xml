@@ -36,11 +36,23 @@ reflects what Nextcloud's cache knows, not a live disk read.
     <licence>AGPL-3.0-or-later</licence>
     <author mail="rsfneg@gmail.com">Ricardo Ferreira</author>
     <namespace>DiskMap</namespace>
+    <documentation>
+        <admin>https://github.com/kreotropic/diskmap#usage</admin>
+    </documentation>
     <category>tools</category>
     <category>monitoring</category>
     <website>https://github.com/kreotropic/diskmap</website>
     <bugs>https://github.com/kreotropic/diskmap/issues</bugs>
     <repository type="git">https://github.com/kreotropic/diskmap.git</repository>
+
+    <!-- The App Store renders only these URLs; it does not crawl the README
+         for images, and screenshots/ is excluded from the release tarball
+         (.nextcloudignore), so they have to be absolute https URLs served
+         from the repository. -->
+    <screenshot>https://raw.githubusercontent.com/kreotropic/diskmap/main/screenshots/1-whole-server.png</screenshot>
+    <screenshot>https://raw.githubusercontent.com/kreotropic/diskmap/main/screenshots/2-my-storage.png</screenshot>
+    <screenshot>https://raw.githubusercontent.com/kreotropic/diskmap/main/screenshots/3-team-folder.png</screenshot>
+    <screenshot>https://raw.githubusercontent.com/kreotropic/diskmap/main/screenshots/4-tree-map-sync.png</screenshot>
 
     <dependencies>
         <php min-version="8.1"/>
