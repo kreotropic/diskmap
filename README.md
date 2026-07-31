@@ -231,12 +231,16 @@ directly, behind a scope-based read API. See `lib/` and `src/`.
 
 ### Tests
 
-Development dependencies (PHPUnit) are not shipped — install them first:
+Development dependencies (PHPUnit, PHPStan) are not shipped — install them first:
 
 ```bash
 composer install
 vendor/bin/phpunit
+vendor/bin/phpstan analyse
 ```
+
+Both run in CI (`.github/workflows/ci.yml`) on every push — run them locally
+before pushing rather than finding out there.
 
 ### Cross-engine checks
 
