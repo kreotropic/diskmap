@@ -8,8 +8,8 @@
 **See where your storage is going — a WinDirStat-style treemap for your whole
 Nextcloud, without scanning a single file.**
 
-DiskMap gives administrators an instance-wide picture of storage usage — every
-account, team folder and external storage — and gives every user the same view
+DiskMap gives administrators an instance-wide picture of storage usage, every
+account, team folder and external storage and gives every user the same view
 of their own files. It pairs a treemap with an expandable folder tree, kept in
 sync both ways, so you can get from *"the server is full"* to *"that folder is
 why"* in a few clicks.
@@ -21,7 +21,7 @@ why"* in a few clicks.
 When a Nextcloud instance fills up, finding out *what* filled it is
 surprisingly hard. `occ files:scan` says nothing about sizes, the quota column
 only shows totals, and the Files app has no "sort the whole server by size"
-view. The usual fallback — running `du` on the data directory — needs shell
+view. The usual fallback, running `du` on the data directory needs shell
 access, returns opaque hashed paths, and hammers the disk on a live server.
 
 DiskMap answers the question from data Nextcloud already keeps. Every folder's
@@ -103,7 +103,7 @@ php occ app:enable diskmap --groups=admin     # restrict
 php occ app:enable diskmap                    # back to everyone
 ```
 
-Restricted accounts lose the app completely — it disappears from the app menu,
+Restricted accounts lose the app completely, it disappears from the app menu,
 and every page and API endpoint answers *App is not enabled* at the framework
 level, before any DiskMap code runs. A settings toggle inside the app could
 only have hidden the navigation entry.
@@ -113,7 +113,7 @@ administrators outside the `admin` group would be excluded too. Any group works
 if you want a different audience.
 
 Worth deciding deliberately rather than by default, though. The per-user view is
-strictly scoped to the caller's own files — it cannot reveal anyone else's data —
+strictly scoped to the caller's own files, it cannot reveal anyone else's data
 and letting people see what is filling their own quota tends to *reduce* support
 requests rather than create them.
 
