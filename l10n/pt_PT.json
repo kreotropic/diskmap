@@ -35,7 +35,10 @@
         "Collapse": "Colapsar",
         "Opening…": "A abrir…",
         "Could not load the folder tree.": "Não foi possível carregar a árvore de pastas.",
-        "No items found.": "Nenhum item encontrado."
+        "No items found.": "Nenhum item encontrado.",
+        "Could not load external storages.": "Não foi possível carregar os armazenamentos externos.",
+        "Not fully scanned yet — at least this much.": "Ainda não foi totalmente analisado — pelo menos este valor.",
+        "This storage has not been fully scanned yet, so sizes are a lower bound. Background scanning fills this in over time; \"occ files_external:scan\" measures it right away.": "Este armazenamento ainda não foi totalmente analisado, por isso os tamanhos são um valor mínimo. A análise em segundo plano preenche-os com o tempo; \"occ files_external:scan\" mede-o de imediato."
     },
     "pluralForm": "nplurals=2; plural=(n != 1);"
 }

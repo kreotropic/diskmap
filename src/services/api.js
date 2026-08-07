@@ -18,6 +18,17 @@ export async function fetchTeamFolders() {
 }
 
 /**
+ * Fetch the admin external-storage list: one entry per files_external mount
+ * (S3, SMB, WebDAV, local …), with its total and whether that total is
+ * exact. Browsing one afterwards needs nothing special — it is a plain
+ * 'storage' scope keyed by the numeric storage id returned here.
+ */
+export async function fetchExternalStorages() {
+	const { data } = await axios.get(base('/api/v1/admin/externalstorages'))
+	return data.externalStorages
+}
+
+/**
  * Fetch the caller's own storage overview: files/trash/versions breakdown
  * and quota occupancy.
  */

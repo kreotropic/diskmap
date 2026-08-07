@@ -59,6 +59,14 @@ final class UsageNode implements \JsonSerializable {
         // place. Null for files (their own $mimetype already says everything)
         // and every node from mapTree().
         public readonly ?array $composition = null,
+        // False when $size is a lower bound rather than a real total — set
+        // only on an external storage whose filecache root still reads -1
+        // ("not calculated"). The UI renders it as "at least this much" and,
+        // crucially, still offers to expand the row: the children the cache
+        // does know about are perfectly listable even when their parent's
+        // total is not. Null (the default) means the size is exact, which is
+        // every other node.
+        public readonly ?bool $sizeExact = null,
     ) {
     }
 
@@ -76,6 +84,7 @@ final class UsageNode implements \JsonSerializable {
             'kind' => $this->kind,
             'composition' => $this->composition,
             'displayName' => $this->displayName,
+            'sizeExact' => $this->sizeExact,
         ];
     }
 }

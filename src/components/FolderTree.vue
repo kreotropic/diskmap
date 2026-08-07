@@ -67,7 +67,10 @@
 								:style="{ width: seg.pct + '%', background: seg.color }" />
 						</span>
 					</span>
-					<span class="dm-tree__col-size">{{ formatBytes(node.size) }}</span>
+					<span
+						class="dm-tree__col-size"
+						:class="{ 'dm-tree__col-size--approx': node.sizeExact === false }"
+						:title="node.sizeExact === false ? t('diskmap', 'Not fully scanned yet — at least this much.') : null">{{ sizeLabel(node) }}</span>
 					<!-- '…' rather than formatCount()'s '—' while the aggregate is
 					     still in flight: '—' is what a row with genuinely no count
 					     shows (a file), so reusing it here would read as "no files"
@@ -161,6 +164,36 @@ export default {
 	methods: {
 		t,
 		formatBytes,
+		// "≥ 3 MB" rather than a bare "3 MB" when the backend told us the
+		// figure is a lower bound, so a partially scanned storage never reads
+		// as an exact measurement. A lower bound of zero means nothing at all
+		// is known yet — "≥ 0 B" would read as "empty", which is the one
+		// thing it does not mean.
+		sizeLabel(node) {
+			if (node.sizeExact === false) {
+				return node.size > 0 ? `≥ ${formatBytes(node.size)}` : t('diskmap', 'unknown')
+			}
+			return formatBytes(node.size)
+		},
+		// Expanding a folder whose size the file cache never measured is
+		// itself new information: the children just listed are a bound the
+		// row can show instead of "unknown". Stays a bound (sizeExact keeps
+		// its false) — a child may be unmeasured too, and the level may have
+		// been truncated.
+		//
+		// max(), never assignment: the bound already on the node can be the
+		// better one. A storage root's comes from summing every file row in
+		// the whole storage, which reaches deeper than the single level
+		// expanded here — overwriting it with this level's sum would make the
+		// figure go *down* as the user explores, which is the one thing a
+		// lower bound must never do.
+		raiseLowerBound(node, children) {
+			if (node.sizeExact !== false) {
+				return
+			}
+			const known = children.reduce((sum, child) => sum + Math.max(0, child.size), 0)
+			node.size = Math.max(node.size, known)
+		},
 		formatDate,
 		formatCount,
 		async loadRoot() {
@@ -190,6 +223,7 @@ export default {
 					name: this.rootLabel,
 					navPath: '',
 					size: data.root.size,
+					sizeExact: data.root.sizeExact ?? null,
 					mtime: data.root.mtime,
 					type: data.root.type,
 					fileCount: null,
@@ -255,6 +289,7 @@ export default {
 				const children = this.childNodes(data.items, data.truncated, node)
 				this.flatTree.splice(idx + 1, 0, ...children)
 				node.expanded = true
+				this.raiseLowerBound(node, children)
 				// Same as loadRoot(): deliberately not awaited, so revealPath()'s
 				// chain of expands isn't serialized behind the slow half either,
 				// and re-read from flatTree for the reactivity reason spelled
@@ -323,6 +358,9 @@ export default {
 				displayName: item.displayName ?? null,
 				navPath,
 				size: item.size,
+				// False only on an external storage whose total the file cache
+				// hasn't computed yet — see UsageNode::$sizeExact.
+				sizeExact: item.sizeExact ?? null,
 				mtime: item.mtime,
 				type: item.type,
 				// Only ever set for a 'file' item — used to color its
@@ -340,7 +378,12 @@ export default {
 				// ('user' | 'teamfolder' | 'external') — null everywhere else.
 				kind: item.kind ?? null,
 				depth,
-				hasArrow: item.type === 'folder' && item.size > 0,
+				// The size test is only a cheap way to skip folders that are
+				// genuinely empty. A folder whose size merely isn't *known*
+				// must stay expandable: its children are in the cache and list
+				// perfectly well, and refusing the arrow was what left an
+				// unscanned external storage impossible to open at all.
+				hasArrow: item.type === 'folder' && (item.size > 0 || item.sizeExact === false),
 				expanded: false,
 				loadingChildren: false,
 			}
@@ -774,6 +817,13 @@ export default {
 .dm-tree__col-count {
 	text-align: right;
 	font-size: 0.9em;
+}
+
+/* A lower bound, not a measurement — muted and cursor-help so the "≥" isn't
+   read as a typo, with the explanation on the row's own title attribute. */
+.dm-tree__col-size--approx {
+	color: var(--color-text-maxcontrast);
+	cursor: help;
 }
 
 .dm-tree__col-mtime {

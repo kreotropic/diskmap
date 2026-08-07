@@ -10,9 +10,10 @@ declare(strict_types=1);
 namespace OCA\DiskMap\Usage;
 
 /**
- * One top-level entry of the whole-instance scope (plan Phase 3d): either a
- * user's home or a team folder, already resolved to a real [storage, path,
- * fileid] a mapTree()/children() expansion can query directly.
+ * One top-level entry of the whole-instance scope (plan Phase 3d): a user's
+ * home, a team folder, or an external storage, already resolved to a real
+ * [storage, path, fileid] a mapTree()/children() expansion can query
+ * directly.
  */
 final class InstanceTopLevelEntry {
     public function __construct(
@@ -29,12 +30,21 @@ final class InstanceTopLevelEntry {
         // back to the uid itself when the account can't be resolved — same
         // contract as share_audit_dashboard's DisplayNameResolver.
         public readonly string $displayName,
-        public readonly string $kind, // 'user' | 'teamfolder'
+        public readonly string $kind, // 'user' | 'teamfolder' | 'external'
         public readonly int $storageId,
         public readonly string $path,
         public readonly int $fileid,
         public readonly int $size,
         public readonly ?int $mtime,
+        // False when $size is a lower bound rather than the real total: an
+        // external storage that has never been fully scanned keeps -1 ("not
+        // calculated") on its filecache root, and -1 is not a size — sorting
+        // and tile areas treat it as the smallest value there is, which hid
+        // the storage completely. $size then carries the sum of the rows the
+        // cache *does* know about, so ordering, truncation and tile area all
+        // stay meaningful, and the UI can label it as a "at least this much"
+        // figure instead of presenting it as exact.
+        public readonly bool $sizeExact = true,
     ) {
     }
 }

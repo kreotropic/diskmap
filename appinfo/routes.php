@@ -50,6 +50,12 @@ return [
         // Admin-only: team folder overview (used/quota, files/trash/versions, linked groups).
         ['name' => 'adminApi#teamFolders', 'url' => '/api/v1/admin/teamfolders', 'verb' => 'GET'],
 
+        // Admin-only: the files_external mounts, for their own sidebar
+        // entries. The tree/map behind such an entry need nothing new — they
+        // browse it through the plain Scope::TYPE_STORAGE that usage#children
+        // and usage#map already serve.
+        ['name' => 'adminApi#externalStorages', 'url' => '/api/v1/admin/externalstorages', 'verb' => 'GET'],
+
         // Admin-only: whole-instance header total (files+trash+versions across
         // everyone) — separate from map()'s own root.size, which is a
         // structural files-only total the rendered tiles must sum to.

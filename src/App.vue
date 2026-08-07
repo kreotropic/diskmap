@@ -25,12 +25,28 @@
 						{{ formatBytes(folder.used) }}
 					</template>
 				</NcAppNavigationItem>
+				<NcAppNavigationItem
+					v-for="storage in externalStorages"
+					:key="externalNavId(storage)"
+					:name="storage.name"
+					:active="selectedId === externalNavId(storage)"
+					@click="selectedId = externalNavId(storage)">
+					<template #counter>
+						{{ externalCounter(storage) }}
+					</template>
+				</NcAppNavigationItem>
+				<NcNoteCard v-if="externalLoadError" type="warning">
+					{{ t('diskmap', 'Could not load external storages.') }}
+				</NcNoteCard>
 			</template>
 		</NcAppNavigation>
 
 		<NcAppContent>
 			<MyStorageView v-if="selectedId === MY_STORAGE_ID" :uid="uid" />
 			<InstanceView v-else-if="isAdmin && selectedId === INSTANCE_ID" />
+			<ExternalStorageDetail
+				v-else-if="isAdmin && selectedExternal"
+				:storage="selectedExternal" />
 			<template v-else-if="isAdmin">
 				<NcLoadingIcon v-if="loading" :size="32" />
 				<NcNoteCard v-else-if="loadError" type="error">
@@ -58,14 +74,19 @@ import { translate as t } from '@nextcloud/l10n'
 import { getCurrentUser } from '@nextcloud/auth'
 
 import TeamFolderDetail from './views/TeamFolderDetail.vue'
+import ExternalStorageDetail from './views/ExternalStorageDetail.vue'
 import MyStorageView from './views/MyStorageView.vue'
 import InstanceView from './views/InstanceView.vue'
-import { fetchTeamFolders } from './services/api.js'
+import { fetchExternalStorages, fetchTeamFolders } from './services/api.js'
 import { formatBytes } from './utils/format.js'
 
 // Sentinel nav selections distinct from any team folder id (those are ints).
 const MY_STORAGE_ID = '__me__'
 const INSTANCE_ID = '__instance__'
+// External storages are keyed by their numeric storage id, which collides
+// with team folder ids — this prefix keeps the two id spaces apart in the
+// single `selectedId` the nav switches on.
+const EXTERNAL_PREFIX = 'storage:'
 
 export default {
 	name: 'App',
@@ -78,6 +99,7 @@ export default {
 		NcEmptyContent,
 		NcNoteCard,
 		TeamFolderDetail,
+		ExternalStorageDetail,
 		MyStorageView,
 		InstanceView,
 	},
@@ -89,14 +111,19 @@ export default {
 			uid: user?.uid ?? '',
 			isAdmin: user?.isAdmin ?? false,
 			teamFolders: [],
+			externalStorages: [],
 			selectedId: MY_STORAGE_ID,
 			loading: true,
 			loadError: false,
+			externalLoadError: false,
 		}
 	},
 	computed: {
 		selectedFolder() {
 			return this.teamFolders.find((folder) => folder.id === this.selectedId) ?? null
+		},
+		selectedExternal() {
+			return this.externalStorages.find((storage) => this.externalNavId(storage) === this.selectedId) ?? null
 		},
 	},
 	async mounted() {
@@ -104,17 +131,31 @@ export default {
 			this.loading = false
 			return
 		}
-		try {
-			this.teamFolders = await fetchTeamFolders()
-		} catch (e) {
-			this.loadError = true
-		} finally {
-			this.loading = false
-		}
+		// Settled, not all(): the two lists are independent sidebar sections
+		// and a groupfolders-less instance failing one must not blank the
+		// other out of the nav.
+		const [teamFolders, externalStorages] = await Promise.allSettled([
+			fetchTeamFolders(),
+			fetchExternalStorages(),
+		])
+		this.teamFolders = teamFolders.status === 'fulfilled' ? teamFolders.value : []
+		this.loadError = teamFolders.status === 'rejected'
+		this.externalStorages = externalStorages.status === 'fulfilled' ? externalStorages.value : []
+		this.externalLoadError = externalStorages.status === 'rejected'
+		this.loading = false
 	},
 	methods: {
 		t,
 		formatBytes,
+		externalNavId(storage) {
+			return EXTERNAL_PREFIX + storage.storageId
+		},
+		// Same "≥" convention the tree uses for a storage the file cache
+		// hasn't finished measuring — see UsageNode::$sizeExact.
+		externalCounter(storage) {
+			const label = formatBytes(storage.used)
+			return storage.sizeExact === false ? `≥ ${label}` : label
+		},
 	},
 }
 </script>

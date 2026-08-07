@@ -75,7 +75,17 @@ class FilecacheUsageSource implements IUsageSource {
         $row = $result->fetch();
         $result->closeCursor();
 
-        return $row ? (int)$row['mtime'] : null;
+        if (!$row) {
+            return null;
+        }
+
+        // An external storage's root row is created with mtime 0 and only
+        // gets a real one once something scans it — rendering that verbatim
+        // dated the whole view to January 1970. Null is the "unknown" the
+        // callers already handle.
+        $mtime = (int)$row['mtime'];
+
+        return $mtime > 0 ? $mtime : null;
     }
 
     public function children(Scope $scope, int $limit): array {
@@ -95,28 +105,45 @@ class FilecacheUsageSource implements IUsageSource {
         }
 
         [$rows, $truncated] = $this->fetchChildRows($storageId, $rootRow['fileid'], $limit);
+        [$rootSize, $rootExact] = $this->resolveRootSize($storageId, $path, $rootRow['size']);
 
         $folderMimetypeId = $this->folderMimetypeId();
         $items = array_map(function (array $row) use ($folderMimetypeId) {
             $isFolder = (int)$row['mimetype'] === $folderMimetypeId;
+            // A folder inside an unscanned external storage is itself
+            // unscanned, so it has no cached descendants to bound its size
+            // with — 0 with the inexact flag is the honest answer, and it is
+            // what tells the tree to keep offering the expand arrow. (No
+            // per-row lower-bound query here for exactly that reason: it
+            // would sum an empty set every time.)
+            $rawSize = (int)$row['size'];
+            $sizeKnown = $rawSize >= 0;
+
             return new UsageNode(
                 name: (string)$row['name'],
                 path: (string)$row['path'],
-                size: (int)$row['size'],
+                size: $sizeKnown ? $rawSize : 0,
                 type: $isFolder ? 'folder' : 'file',
                 mimetype: !$isFolder && $row['mimetype_name'] !== null ? (string)$row['mimetype_name'] : null,
                 mtime: (int)$row['mtime'],
+                sizeExact: $sizeKnown ? null : false,
             );
         }, $rows);
 
         return [
             'root' => new UsageNode(
-                name: $rootRow['name'],
+                // A storage root (path '') has an empty name in the cache —
+                // it is the storage, not a folder inside one. Callers that
+                // render the root from the response rather than from their
+                // own label would show a blank heading, so fall back to the
+                // scope's own identifier.
+                name: $rootRow['name'] !== '' ? $rootRow['name'] : $scope->identifier,
                 path: $path,
-                size: $rootRow['size'],
+                size: $rootSize,
                 type: 'folder', // every rootPath() resolution is a directory
                 mimetype: null,
                 mtime: $rootRow['mtime'],
+                sizeExact: $rootExact ? null : false,
             ),
             'items' => $items,
             'truncated' => $truncated,
@@ -141,7 +168,7 @@ class FilecacheUsageSource implements IUsageSource {
      *  1. CompositionCache — a hit costs nothing and needs no query at all.
      *  2. compositionByChild() — one query for the level instead of one per
      *     folder in it.
-     *  3. the size <= 0 short-circuit, unchanged from recursiveComposition().
+     *  3. the provablyEmpty() short-circuit, shared with recursiveComposition().
      *
      * @return array{
      *     root: ?array{count: int, composition: array<string, int>},
@@ -197,7 +224,7 @@ class FilecacheUsageSource implements IUsageSource {
         $items = [];
         $missing = false;
         foreach ($folders as $folder) {
-            if ($folder['size'] <= 0) {
+            if (self::provablyEmpty($folder['size'])) {
                 $items[$folder['name']] = self::EMPTY_COMPOSITION;
                 continue;
             }
@@ -209,7 +236,7 @@ class FilecacheUsageSource implements IUsageSource {
             }
         }
 
-        $rootAggregate = $rootRow['size'] > 0
+        $rootAggregate = !self::provablyEmpty($rootRow['size'])
             ? $this->compositionCache->get($storageId, $path, $rootRow['size'], $rootRow['mtime'])
             : self::EMPTY_COMPOSITION;
         if ($rootAggregate === null) {
@@ -239,7 +266,7 @@ class FilecacheUsageSource implements IUsageSource {
             $this->compositionCache->set($storageId, $path, $rootRow['size'], $rootRow['mtime'], $rootAggregate);
 
             foreach ($folders as $folder) {
-                if ($folder['size'] <= 0) {
+                if (self::provablyEmpty($folder['size'])) {
                     continue;
                 }
                 // compositionByChild() keys by full path, not by bare name.
@@ -323,17 +350,25 @@ class FilecacheUsageSource implements IUsageSource {
             return ['root' => null];
         }
 
+        // Without this the map of an unscanned external storage came back
+        // completely empty: every tile area and expansion threshold here is a
+        // ratio against the root's own size, and a root of -1 makes each one
+        // of them collapse to nothing. The known-rows lower bound is a real
+        // number those ratios work against.
+        [$rootSize, $rootExact] = $this->resolveRootSize($storageId, $path, $rootRow['size']);
+
         $builderRoot = $this->makeBuilderNode(
             storageId: $storageId,
             fileid: $rootRow['fileid'],
             name: $rootRow['name'],
-            size: $rootRow['size'],
+            size: $rootSize,
             type: 'folder',
             mimetype: null,
             mtime: $rootRow['mtime'],
+            sizeExact: $rootExact ? null : false,
         );
 
-        $this->expandFrontier([$builderRoot], $maxNodes, (int)$rootRow['size']);
+        $this->expandFrontier([$builderRoot], $maxNodes, $rootSize);
 
         return ['root' => $this->toUsageNode($builderRoot['ref'])];
     }
@@ -381,6 +416,7 @@ class FilecacheUsageSource implements IUsageSource {
             mimetype: null,
             mtime: $e->mtime,
             displayName: $e->displayName,
+            sizeExact: $e->sizeExact ? null : false,
         ), $kept);
 
         // The overflow "other" tile aggregates many different accounts, so
@@ -446,7 +482,16 @@ class FilecacheUsageSource implements IUsageSource {
         while ($budget > 1 && $queries < self::MAX_TREE_QUERIES && !empty($frontier)) {
             usort($frontier, static fn (array $a, array $b) => $b['size'] <=> $a['size']);
             $node = array_shift($frontier);
-            if ($node['size'] <= 0) {
+            // Uses the shared predicate for consistency, but nothing with an
+            // unmeasured size actually reaches this point: a -1 child never
+            // clears the $threshold test below, so it is folded into the
+            // level's "other" bucket instead of ever joining the frontier.
+            // That bucket is sized by subtraction from the parent's own
+            // total, so the *area* an unscanned subtree occupies is still
+            // correct — it just isn't broken out per folder. Giving those
+            // folders their own tiles would need the fold-in arithmetic to
+            // know what an expansion is about to reveal, which it cannot.
+            if (self::provablyEmpty($node['size'])) {
                 continue;
             }
 
@@ -538,7 +583,7 @@ class FilecacheUsageSource implements IUsageSource {
      * 'ref' key to a small mutable object (for the shared mutation) —
      * toUsageNode() walks 'ref' objects into the final readonly tree.
      */
-    private function makeBuilderNode(int $storageId, int $fileid, string $name, int $size, string $type, ?string $mimetype, ?int $mtime, ?string $displayName = null): array {
+    private function makeBuilderNode(int $storageId, int $fileid, string $name, int $size, string $type, ?string $mimetype, ?int $mtime, ?string $displayName = null, ?bool $sizeExact = null): array {
         $ref = new \stdClass();
         $ref->fileid = $fileid;
         $ref->name = $name;
@@ -550,6 +595,7 @@ class FilecacheUsageSource implements IUsageSource {
         $ref->fileCount = null;
         $ref->countExact = null;
         $ref->displayName = $displayName;
+        $ref->sizeExact = $sizeExact;
         return [
             'storageId' => $storageId,
             'fileid' => $fileid,
@@ -578,6 +624,7 @@ class FilecacheUsageSource implements IUsageSource {
             'fileCount' => $count,
             'countExact' => $countExact,
             'displayName' => null,
+            'sizeExact' => null,
         ];
     }
 
@@ -599,6 +646,7 @@ class FilecacheUsageSource implements IUsageSource {
             ) : null,
             countExact: $ref->countExact,
             displayName: $ref->displayName ?? null,
+            sizeExact: $ref->sizeExact ?? null,
         );
     }
 
@@ -620,6 +668,7 @@ class FilecacheUsageSource implements IUsageSource {
         $ref->fileCount = $child['fileCount'];
         $ref->countExact = $child['countExact'];
         $ref->displayName = $child['displayName'] ?? null;
+        $ref->sizeExact = $child['sizeExact'] ?? null;
         return $ref;
     }
 
@@ -772,10 +821,26 @@ class FilecacheUsageSource implements IUsageSource {
         return "SUBSTRING_INDEX(f.path, '/', " . $segments . ')';
     }
 
+    /**
+     * Whether a filecache size proves a folder has nothing below it worth
+     * querying.
+     *
+     * Only an exact 0 proves that. -1 means "not calculated yet", which is
+     * the normal state of a folder inside an external storage nobody has
+     * scanned — and such a folder can perfectly well have cached
+     * descendants, because browsing its parent recorded them. Every site
+     * here used to test `size <= 0`, which folded the two cases together
+     * and reported "0 files" with an empty composition bar for folders
+     * whose contents were listed on the very same screen.
+     */
+    private static function provablyEmpty(int $size): bool {
+        return $size === 0;
+    }
+
     private function recursiveComposition(int $storageId, string $path, int $size): array {
         // A folder's own aggregate size already tells us whether it has any
         // descendants at all — skip the query for an empty folder.
-        if ($size <= 0) {
+        if (self::provablyEmpty($size)) {
             return self::EMPTY_COMPOSITION;
         }
 
@@ -839,7 +904,7 @@ class FilecacheUsageSource implements IUsageSource {
             // The same short-circuit recursiveComposition() applies per
             // folder: an aggregate size of 0 already proves there are no
             // descendants to break down, so this entry needs no query at all.
-            if ($entry->size <= 0) {
+            if (self::provablyEmpty($entry->size)) {
                 $result[$key] = self::EMPTY_COMPOSITION;
                 continue;
             }
@@ -1019,6 +1084,62 @@ class FilecacheUsageSource implements IUsageSource {
     /**
      * @return array{fileid: int, name: string, size: int, mtime: int}|null
      */
+    /**
+     * The size to treat a scope root as having, plus whether that is the real
+     * total.
+     *
+     * A filecache size of -1 means "not calculated yet", which is normal for
+     * an external storage: Nextcloud reads its contents live from the remote
+     * backend and only records sizes when something scans it. -1 is not a
+     * size, though, and every ratio in this class (tile areas, expansion
+     * thresholds) treats it as smaller than empty — which is why an
+     * unscanned mount produced an empty map. The rows the cache already
+     * holds are a true lower bound, so use those and say the figure is
+     * inexact. InstanceIndex does the same for its own top-level entries.
+     *
+     * @return array{0: int, 1: bool} [size, isExact]
+     */
+    private function resolveRootSize(int $storageId, string $path, int $rawSize): array {
+        if ($rawSize >= 0) {
+            return [$rawSize, true];
+        }
+
+        return [$this->knownSizeBelow($storageId, $path), false];
+    }
+
+    /**
+     * Sum of every *file* row the cache holds under $path. Folders are
+     * excluded so one whose own recursive total is already known isn't
+     * counted on top of the files inside it; rows still at -1 drop out via
+     * the same "size > 0" test.
+     */
+    private function knownSizeBelow(int $storageId, string $path): int {
+        $qb = $this->db->getQueryBuilder();
+        $qb->selectAlias($qb->func()->sum('size'), 'known_size')
+            ->from('filecache')
+            ->where($qb->expr()->eq('storage', $qb->createNamedParameter($storageId, IQueryBuilder::PARAM_INT)))
+            ->andWhere($qb->expr()->gt('size', $qb->createNamedParameter(0, IQueryBuilder::PARAM_INT)))
+            ->andWhere($qb->expr()->neq(
+                'mimetype',
+                $qb->createNamedParameter($this->folderMimetypeId(), IQueryBuilder::PARAM_INT),
+            ));
+
+        // An empty $path is the storage root — every row already qualifies,
+        // and a LIKE '/%' would match none of them.
+        if ($path !== '') {
+            $qb->andWhere($qb->expr()->like(
+                'path',
+                $qb->createNamedParameter($this->db->escapeLikeParameter($path) . '/%'),
+            ));
+        }
+
+        $result = $qb->executeQuery();
+        $row = $result->fetch();
+        $result->closeCursor();
+
+        return $row && $row['known_size'] !== null ? (int)$row['known_size'] : 0;
+    }
+
     private function rowAtExactPath(int $storageId, string $path): ?array {
         $qb = $this->db->getQueryBuilder();
         $qb->select('fileid', 'name', 'size', 'mtime')
@@ -1131,6 +1252,7 @@ class FilecacheUsageSource implements IUsageSource {
                 mtime: $e->mtime,
                 kind: $e->kind,
                 displayName: $e->displayName,
+                sizeExact: $e->sizeExact ? null : false,
             ), $shown);
 
             return [

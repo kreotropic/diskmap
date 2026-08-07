@@ -35,7 +35,10 @@
         "Collapse": "Collapse",
         "Opening…": "Opening…",
         "Could not load the folder tree.": "Could not load the folder tree.",
-        "No items found.": "No items found."
+        "No items found.": "No items found.",
+        "Could not load external storages.": "Could not load external storages.",
+        "Not fully scanned yet — at least this much.": "Not fully scanned yet — at least this much.",
+        "This storage has not been fully scanned yet, so sizes are a lower bound. Background scanning fills this in over time; \"occ files_external:scan\" measures it right away.": "This storage has not been fully scanned yet, so sizes are a lower bound. Background scanning fills this in over time; \"occ files_external:scan\" measures it right away."
     },
     "pluralForm": "nplurals=2; plural=(n != 1);"
 }

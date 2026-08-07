@@ -32,6 +32,8 @@ class InstanceIndex {
     /** @var InstanceTopLevelEntry[]|null */
     private ?array $listAllCache = null;
 
+    private ?int $folderMimetypeIdCache = null;
+
     public function __construct(
         private IDBConnection $db,
         private LayoutDetector $layoutDetector,
@@ -61,6 +63,25 @@ class InstanceIndex {
         $entries = [...$this->listUsers(), ...$teamFolders, ...$this->listExternalStorages($teamFolderStorageIds)];
 
         return $this->listAllCache = $this->disambiguateNames($entries);
+    }
+
+    /**
+     * Just the external storages of listAll(), for the navigation sidebar's
+     * own entries (the tree/map already reach them through the whole-server
+     * scope). Filtered out of listAll() rather than calling
+     * listExternalStorages() directly so both places agree on exactly the
+     * same set, the same names — disambiguateNames() runs across users and
+     * team folders too, and a name that got suffixed there must carry the
+     * suffix here as well or the sidebar would link to a path the tree
+     * cannot resolve.
+     *
+     * @return InstanceTopLevelEntry[]
+     */
+    public function externalStorages(): array {
+        return array_values(array_filter(
+            $this->listAll(),
+            static fn (InstanceTopLevelEntry $e) => $e->kind === 'external',
+        ));
     }
 
     /**
@@ -110,6 +131,7 @@ class InstanceIndex {
                 fileid: $entry->fileid,
                 size: $entry->size,
                 mtime: $entry->mtime,
+                sizeExact: $entry->sizeExact,
             );
         }
 
@@ -319,9 +341,10 @@ class InstanceIndex {
      * oc_storages.id string from its own config columns at runtime, so
      * there's no single stable join path across backend types). Reading
      * oc_storages directly instead means this works for every backend
-     * without backend-specific parsing, at the cost of a less friendly
-     * display name (the raw storage id minus its "backend::" prefix,
-     * rather than the admin-configured mount point).
+     * without backend-specific parsing. Display names come from oc_mounts
+     * (see mountPointNames()), which does have a storage-id column — the
+     * raw storage id is only a fallback now, because for several backends
+     * it is a hash rather than anything a human would recognise.
      *
      * @param int[] $excludeStorageIds team-folder storage ids, already
      *     listed by listTeamFolders() — excluded here so a folder never
@@ -351,7 +374,7 @@ class InstanceIndex {
             // object-storage instance consistent with a local one, which has
             // never listed its data root here either. (A files_external S3
             // mount is unaffected — those get a backend-specific storage id
-            // like "amazon::<bucket>", not this prefix.)
+            // of their own, "amazon::external::<md5>", not this prefix.)
             ->andWhere($qb->expr()->notLike('s.id', $qb->createNamedParameter('object::store:%')));
 
         $result = $qb->executeQuery();
@@ -368,6 +391,9 @@ class InstanceIndex {
         }
 
         $dataRoots = $this->dataRootStorageIds(array_keys($candidates));
+        $visibleIds = array_values(array_diff(array_keys($candidates), $dataRoots));
+        $mountNames = $this->mountPointNames($visibleIds);
+        $knownSizes = $this->knownFileSizes($visibleIds);
 
         $entries = [];
         foreach ($rows as $row) {
@@ -376,7 +402,18 @@ class InstanceIndex {
                 continue;
             }
 
-            $displayName = $this->externalDisplayName($candidates[$numericId]);
+            $displayName = $mountNames[$numericId] ?? $this->externalDisplayName($candidates[$numericId]);
+
+            // -1 is "size not calculated yet", not a size. Passing it straight
+            // through made every unscanned external storage sort below even an
+            // empty one, which on any instance with more top-level entries than
+            // MAX_INSTANCE_TOP_TILES dropped it off the map entirely — and gave
+            // it a zero-area tile and no expand arrow when it did survive. The
+            // rows the cache already holds are a true lower bound, so use those
+            // and mark the figure inexact.
+            $rootSize = (int)$row['size'];
+            $sizeExact = $rootSize >= 0;
+
             $entries[] = new InstanceTopLevelEntry(
                 name: $displayName,
                 displayName: $displayName,
@@ -384,12 +421,147 @@ class InstanceIndex {
                 storageId: $numericId,
                 path: '',
                 fileid: (int)$row['fileid'],
-                size: (int)$row['size'],
+                size: $sizeExact ? $rootSize : ($knownSizes[$numericId] ?? 0),
                 mtime: $row['mtime'] !== null ? (int)$row['mtime'] : null,
+                sizeExact: $sizeExact,
             );
         }
 
         return $entries;
+    }
+
+    /**
+     * The admin-configured mount point of each storage, as the last path
+     * segment(s) after "/<uid>/files/" — "/ncadmin/files/s3test/" becomes
+     * "s3test".
+     *
+     * This is what listExternalStorages()'s own docblock says it deliberately
+     * gave up on by not joining oc_external_mounts (no stable storage-id
+     * column across backend types). oc_mounts, unlike oc_external_mounts,
+     * *does* have one, and it covers every backend without any per-backend
+     * parsing — which matters because the fallback is unreadable: modern
+     * Nextcloud gives an S3 mount the storage id "amazon::external::<md5>",
+     * not the "amazon::<bucket>" this class used to assume, so the sidebar
+     * and tree showed a bare hash.
+     *
+     * One storage can be mounted by many users (a system mount applicable to
+     * all of them); they share the same suffix, so the first one in a stable
+     * ordering names it for everybody.
+     *
+     * @param int[] $storageIds
+     * @return array<int, string>
+     */
+    private function mountPointNames(array $storageIds): array {
+        if (empty($storageIds)) {
+            return [];
+        }
+
+        $qb = $this->db->getQueryBuilder();
+        $qb->select('storage_id', 'mount_point')
+            ->from('mounts')
+            ->where($qb->expr()->in(
+                'storage_id',
+                $qb->createNamedParameter($storageIds, IQueryBuilder::PARAM_INT_ARRAY),
+            ))
+            ->orderBy('mount_point', 'ASC');
+
+        $result = $qb->executeQuery();
+        $names = [];
+        while ($row = $result->fetch()) {
+            $storageId = (int)$row['storage_id'];
+            if (isset($names[$storageId])) {
+                continue;
+            }
+            $leaf = $this->mountPointLeaf((string)$row['mount_point']);
+            if ($leaf !== null) {
+                $names[$storageId] = $leaf;
+            }
+        }
+        $result->closeCursor();
+
+        return $names;
+    }
+
+    /**
+     * Everything after the "/<uid>/files/" prefix every user-visible mount
+     * point carries, trimmed of slashes for the same reason
+     * externalDisplayName() trims: this becomes a single path *segment* in
+     * the tree's navPath. Null when the mount point has no such prefix (a
+     * root-level or internal mount), leaving the caller on its fallback.
+     */
+    private function mountPointLeaf(string $mountPoint): ?string {
+        $marker = '/files/';
+        $pos = strpos($mountPoint, $marker);
+        if ($pos === false) {
+            return null;
+        }
+        $rest = trim(substr($mountPoint, $pos + strlen($marker)), '/');
+
+        return $rest !== '' ? $rest : null;
+    }
+
+    /**
+     * Sum of every *file* row the cache already holds per storage — the lower
+     * bound listExternalStorages() falls back to when the storage root still
+     * reads -1. Folders are excluded so a folder whose own recursive total is
+     * already known isn't counted on top of the files inside it, and rows
+     * still at -1 are excluded by the same "size > 0" test.
+     *
+     * @param int[] $storageIds
+     * @return array<int, int>
+     */
+    private function knownFileSizes(array $storageIds): array {
+        if (empty($storageIds)) {
+            return [];
+        }
+
+        $qb = $this->db->getQueryBuilder();
+        $qb->select('storage')
+            ->selectAlias($qb->func()->sum('size'), 'known_size')
+            ->from('filecache')
+            ->where($qb->expr()->in(
+                'storage',
+                $qb->createNamedParameter($storageIds, IQueryBuilder::PARAM_INT_ARRAY),
+            ))
+            ->andWhere($qb->expr()->gt('size', $qb->createNamedParameter(0, IQueryBuilder::PARAM_INT)))
+            ->andWhere($qb->expr()->neq(
+                'mimetype',
+                $qb->createNamedParameter($this->folderMimetypeId(), IQueryBuilder::PARAM_INT),
+            ))
+            ->groupBy('storage');
+
+        $result = $qb->executeQuery();
+        $sizes = [];
+        while ($row = $result->fetch()) {
+            $sizes[(int)$row['storage']] = (int)$row['known_size'];
+        }
+        $result->closeCursor();
+
+        return $sizes;
+    }
+
+    /**
+     * Same lookup and the same "-1 never matches a real id" fallback as
+     * FilecacheUsageSource's own — duplicated rather than shared because
+     * these two classes are deliberately independent readers (see the class
+     * docblock), and it is one cached query either way.
+     */
+    private function folderMimetypeId(): int {
+        if ($this->folderMimetypeIdCache === null) {
+            $qb = $this->db->getQueryBuilder();
+            $qb->select('id')
+                ->from('mimetypes')
+                ->where($qb->expr()->eq('mimetype', $qb->createNamedParameter('httpd/unix-directory')))
+                ->setMaxResults(1);
+
+            $result = $qb->executeQuery();
+            $row = $result->fetch();
+            $result->closeCursor();
+
+            $this->folderMimetypeIdCache = $row ? (int)$row['id'] : -1;
+        }
+
+        return $this->folderMimetypeIdCache;
     }
 
     /**
