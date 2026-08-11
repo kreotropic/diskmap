@@ -14,6 +14,8 @@ of their own files. It pairs a treemap with an expandable folder tree, kept in
 sync both ways, so you can get from *"the server is full"* to *"that folder is
 why"* in a few clicks.
 
+<a href="https://ateeducacion.github.io/nextcloud-playground/?blueprint-url=https://raw.githubusercontent.com/kreotropic/diskmap/refs/heads/main/blueprint.json" target="_blank" rel="noopener noreferrer"><img src="https://raw.githubusercontent.com/ateeducacion/nextcloud-playground/refs/heads/main/assets/playground-preview-button.svg" alt="Open in Nextcloud Playground" width="224"></a>
+
 ![Whole server](screenshots/1-whole-server.png)
 
 ## Problem Solved
@@ -62,6 +64,33 @@ I/O, no background job.**
 - **Cache timestamp** — every view states when the underlying file cache entry
   was last updated, so it stays clear that this reflects what Nextcloud knows,
   not a live disk read.
+
+## Try it in Nextcloud Playground
+
+Click the badge above (or [this
+link](https://ateeducacion.github.io/nextcloud-playground/?blueprint-url=https://raw.githubusercontent.com/kreotropic/diskmap/refs/heads/main/blueprint.json))
+to open a full Nextcloud instance running entirely in your browser (via
+WebAssembly). It boots with DiskMap installed, the admin already logged in,
+and a few extra accounts seeded with files of different sizes, so the **Whole
+server** treemap has something to show the moment it opens.
+
+No local setup or Docker required. The instance is provisioned from
+[`blueprint.json`](blueprint.json) at the repository root using the
+[`installApp`](https://github.com/ateeducacion/nextcloud-playground/blob/main/docs/blueprint-json.md#installapp)
+step, which installs the release tarball straight from this repository's
+GitHub releases.
+
+> **Playground caveat:** the Playground runs Nextcloud on SQLite, which
+> DiskMap deliberately does not support (see [Known
+> Limitations](#known-limitations)) — `occ app:enable` refuses the app there,
+> even with `--force`. The blueprint therefore extracts the app without
+> enabling it, adds `sqlite` to the `<database>` list of the *demo instance's*
+> copy of `info.xml`, and only then enables it. That patch exists only inside
+> the throwaway browser instance; the shipped app is unchanged. The treemap,
+> folder tree and every size figure work — they use portable queries — but
+> the *Composition* and *File count* columns stay blank, as those queries
+> only have MySQL/MariaDB and PostgreSQL spellings. A real instance on a
+> supported database shows them fully.
 
 ## Installation
 

@@ -4,7 +4,7 @@ Upstream-Contact: Ricardo Ferreira <rsfneg@gmail.com>
 Source: https://github.com/kreotropic/diskmap
 
 # JSON has no comment syntax, so these can't carry an inline SPDX header.
-Files: package.json package-lock.json composer.json composer.lock
+Files: package.json package-lock.json composer.json composer.lock blueprint.json
 Copyright: 2026 Ricardo Ferreira <rsfneg@gmail.com>
 License: AGPL-3.0-or-later
 

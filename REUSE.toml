@@ -13,7 +13,7 @@ SPDX-PackageDownloadLocation = "https://github.com/kreotropic/diskmap"
 # is the one actually in effect for now; keep both in sync until upgrading.
 
 [[annotations]]
-path = ["package.json", "package-lock.json", "composer.json", "composer.lock"]
+path = ["package.json", "package-lock.json", "composer.json", "composer.lock", "blueprint.json"]
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2026 Ricardo Ferreira <rsfneg@gmail.com>"
 SPDX-License-Identifier = "AGPL-3.0-or-later"
