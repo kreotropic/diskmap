@@ -1,0 +1,136 @@
+{
+  "$schema": "https://raw.githubusercontent.com/ateeducacion/nextcloud-playground/main/assets/blueprints/blueprint-schema.json",
+  "meta": {
+    "title": "DiskMap Playground",
+    "author": "diskmap",
+    "description": "A fresh Nextcloud in the browser with the DiskMap app installed. Several accounts are seeded with files of different sizes so the instance-wide treemap has something to show."
+  },
+  "landingPage": "/index.php/apps/diskmap/",
+  "siteOptions": {
+    "title": "Nextcloud + DiskMap",
+    "locale": "en",
+    "timezone": "UTC"
+  },
+  "admin": {
+    "username": "admin",
+    "password": "admin",
+    "email": "admin@example.com"
+  },
+  "steps": [
+    {
+      "step": "disableApp",
+      "app": "firstrunwizard"
+    },
+    {
+      "step": "setConfig",
+      "app": "core",
+      "key": "whatsNewEnabled",
+      "value": "no"
+    },
+    {
+      "step": "installApp",
+      "appId": "diskmap",
+      "url": "https://github-proxy.exelearning.dev/?repo=kreotropic/diskmap&release=v0.1.0&asset=diskmap-signed.tar.gz",
+      "enable": false
+    },
+    {
+      "step": "writeFile",
+      "path": "apps/diskmap/appinfo/info.xml",
+      "content": "<?xml version=\"1.0\"?>\n<!--\n  - SPDX-FileCopyrightText: 2026 Ricardo Ferreira <rsfneg@gmail.com>\n  - SPDX-License-Identifier: AGPL-3.0-or-later\n  -->\n<info xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"\n      xsi:noNamespaceSchemaLocation=\"https://apps.nextcloud.com/schema/apps/info.xsd\">\n    <id>diskmap</id>\n    <name>DiskMap</name>\n    <summary>See where your storage is going \u2014 treemap and top consumers, instance-wide</summary>\n    <description><![CDATA[\nDiskMap shows where storage is going across your Nextcloud instance \u2014 per user and per team\nfolder \u2014 without scanning anything.\n\nNextcloud already tracks aggregated folder sizes in its file cache, updated on every operation.\nDiskMap is a visualizer over data that already exists: it never triggers a filesystem scan.\n\nEach view pairs a WinDirStat-style treemap with an expandable folder tree, kept in sync both\nways: click a tile on the map and the tree opens to that file, click a row in the tree and the\nmap highlights its region.\n\n**For administrators:**\n- Whole-server view: every account, team folder and external storage as a top-level entry,\n  browsable down to individual files.\n- Team folders overview: used space, quota and occupancy, with a files / trash / versions\n  breakdown for each folder.\n\n**For every user:**\n- The same treemap and folder tree over your own storage, with quota occupancy and a\n  files / trash / versions breakdown.\n\nAll figures show the timestamp of the underlying file cache entry, so it's always clear this\nreflects what Nextcloud's cache knows, not a live disk read.\n    ]]></description>\n    <version>0.1.0</version>\n    <licence>AGPL-3.0-or-later</licence>\n    <author mail=\"rsfneg@gmail.com\">Ricardo Ferreira</author>\n    <namespace>DiskMap</namespace>\n    <documentation>\n        <admin>https://github.com/kreotropic/diskmap#usage</admin>\n    </documentation>\n    <category>tools</category>\n    <category>monitoring</category>\n    <website>https://github.com/kreotropic/diskmap</website>\n    <bugs>https://github.com/kreotropic/diskmap/issues</bugs>\n    <repository type=\"git\">https://github.com/kreotropic/diskmap.git</repository>\n\n    <!-- The App Store renders only these URLs; it does not crawl the README\n         for images, and screenshots/ is excluded from the release tarball\n         (.nextcloudignore), so they have to be absolute https URLs served\n         from the repository. -->\n    <screenshot>https://raw.githubusercontent.com/kreotropic/diskmap/main/screenshots/1-whole-server.png</screenshot>\n    <screenshot>https://raw.githubusercontent.com/kreotropic/diskmap/main/screenshots/2-my-storage.png</screenshot>\n    <screenshot>https://raw.githubusercontent.com/kreotropic/diskmap/main/screenshots/3-team-folder.png</screenshot>\n    <screenshot>https://raw.githubusercontent.com/kreotropic/diskmap/main/screenshots/4-tree-map-sync.png</screenshot>\n\n    <dependencies>\n        <php min-version=\"8.1\"/>\n        <!-- The composition queries are the app's only raw SQL and its only\n             dialect-dependent surface; FilecacheUsageSource::isPostgres()\n             documents what differs. SQLite is deliberately still excluded:\n             it needs a third spelling of the same path-segment expression and\n             has no coverage, so declaring only what is tested keeps the app\n             off instances where every view would 500. -->\n        <!-- sqlite added ONLY for the Nextcloud Playground demo: the browser\n             runtime installs against SQLite, and without a matching <database>\n             entry occ app:enable refuses even when forced. Composition and\n             file-count queries stay MySQL/PostgreSQL-only, so those two\n             columns are blank in the Playground; everything else works. -->\n        <database>sqlite</database>\n        <database>mysql</database>\n        <database>pgsql</database>\n        <nextcloud min-version=\"32\" max-version=\"34\"/>\n    </dependencies>\n\n    <navigations>\n        <navigation>\n            <name>DiskMap</name>\n            <route>diskmap.page.index</route>\n            <icon>app.svg</icon>\n        </navigation>\n    </navigations>\n</info>\n"
+    },
+    {
+      "step": "runOcc",
+      "args": [
+        "app:enable",
+        "--force",
+        "diskmap"
+      ]
+    },
+    {
+      "step": "createUser",
+      "username": "alice",
+      "password": "alice-diskmap-demo",
+      "displayName": "Alice Doe",
+      "email": "alice@example.com"
+    },
+    {
+      "step": "createUser",
+      "username": "bob",
+      "password": "bob-diskmap-demo",
+      "displayName": "Bob Meyer",
+      "email": "bob@example.com"
+    },
+    {
+      "step": "writeFile",
+      "path": "data/admin/files/DiskMap screenshots/1-whole-server.png",
+      "url": "https://raw.githubusercontent.com/kreotropic/diskmap/main/screenshots/1-whole-server.png"
+    },
+    {
+      "step": "writeFile",
+      "path": "data/admin/files/DiskMap screenshots/2-my-storage.png",
+      "url": "https://raw.githubusercontent.com/kreotropic/diskmap/main/screenshots/2-my-storage.png"
+    },
+    {
+      "step": "writeFile",
+      "path": "data/admin/files/DiskMap screenshots/3-team-folder.png",
+      "url": "https://raw.githubusercontent.com/kreotropic/diskmap/main/screenshots/3-team-folder.png"
+    },
+    {
+      "step": "writeFile",
+      "path": "data/admin/files/DiskMap screenshots/4-tree-map-sync.png",
+      "url": "https://raw.githubusercontent.com/kreotropic/diskmap/main/screenshots/4-tree-map-sync.png"
+    },
+    {
+      "step": "writeFile",
+      "path": "data/admin/files/Project docs/README.md",
+      "url": "https://raw.githubusercontent.com/kreotropic/diskmap/main/README.md"
+    },
+    {
+      "step": "writeFile",
+      "path": "data/admin/files/Project docs/CHANGELOG.md",
+      "url": "https://raw.githubusercontent.com/kreotropic/diskmap/main/CHANGELOG.md"
+    },
+    {
+      "step": "writeFile",
+      "path": "data/admin/files/Dependency locks/package-lock.json",
+      "url": "https://raw.githubusercontent.com/kreotropic/diskmap/main/package-lock.json"
+    },
+    {
+      "step": "writeFile",
+      "path": "data/admin/files/Dependency locks/composer.lock",
+      "url": "https://raw.githubusercontent.com/kreotropic/diskmap/main/composer.lock"
+    },
+    {
+      "step": "writeFile",
+      "path": "data/alice/files/Screenshots/2-my-storage.png",
+      "url": "https://raw.githubusercontent.com/kreotropic/diskmap/main/screenshots/2-my-storage.png"
+    },
+    {
+      "step": "writeFile",
+      "path": "data/alice/files/Screenshots/4-tree-map-sync.png",
+      "url": "https://raw.githubusercontent.com/kreotropic/diskmap/main/screenshots/4-tree-map-sync.png"
+    },
+    {
+      "step": "writeFile",
+      "path": "data/alice/files/package-lock.json",
+      "url": "https://raw.githubusercontent.com/kreotropic/diskmap/main/package-lock.json"
+    },
+    {
+      "step": "writeFile",
+      "path": "data/bob/files/LICENSE.txt",
+      "url": "https://raw.githubusercontent.com/kreotropic/diskmap/main/LICENSE"
+    },
+    {
+      "step": "writeFile",
+      "path": "data/bob/files/CHANGELOG.md",
+      "url": "https://raw.githubusercontent.com/kreotropic/diskmap/main/CHANGELOG.md"
+    },
+    {
+      "step": "runOcc",
+      "args": [
+        "files:scan",
+        "--all"
+      ]
+    }
+  ]
+}
