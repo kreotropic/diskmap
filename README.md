@@ -206,6 +206,8 @@ The app interface is available in:
 
 - **English** (default)
 - **Portuguese (Portugal)** / Português (Portugal)
+- **German** / Deutsch
+- **Spanish** / Español
 
 Contributions for additional languages are welcome — add a `l10n/<locale>.json`
 and regenerate the matching `l10n/<locale>.js` with `python3 build/l10n.py`.

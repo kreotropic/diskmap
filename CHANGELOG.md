@@ -13,6 +13,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 First public release.
 
 ### Added
+- **German and Spanish** translations of the whole interface.
 - **Nextcloud 34 support** (`max-version` raised from 33), verified on both
   engines. On PostgreSQL upgraded 33 → 34, every read path produced output
   byte-identical to the same instance before the upgrade; on a fresh MariaDB 34
