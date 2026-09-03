@@ -12,6 +12,12 @@
 		<template v-else>
 			<div class="my-storage__header">
 				<h2>{{ t('diskmap', 'My storage') }}</h2>
+				<a
+					:href="filesUrl"
+					class="my-storage__open-in-files"
+					:title="t('diskmap', 'Open the selected folder in Files')">
+					📂 {{ t('diskmap', 'Open in Files') }}
+				</a>
 				<span class="my-storage__sep">·</span>
 				<span><strong>{{ formatBytes(overview.used) }}</strong> {{ t('diskmap', 'used') }}</span>
 				<span class="my-storage__sep">·</span>
@@ -77,6 +83,7 @@ import CategoryLegend from '../components/CategoryLegend.vue'
 import { fetchMyOverview } from '../services/api.js'
 import { formatBytes, formatDate } from '../utils/format.js'
 import { loadPaneSizes, savePaneSizes } from '../utils/panelSplit.js'
+import { filesAppUrl } from '../utils/filesApp.js'
 
 export default {
 	name: 'MyStorageView',
@@ -93,11 +100,27 @@ export default {
 			// Owned here (not in Treemap) so the header's <CategoryLegend> and
 			// the map below can read/write the same value — they're siblings.
 			activeCategory: null,
+			// The tree's current selection ({path, type}), forwarded here by
+			// onSelectPath() purely to drive the "Open in Files" link below —
+			// the tree/map sync itself doesn't need this view to remember it.
+			selectedPath: null,
 		}
 	},
 	computed: {
 		lastUpdatedLabel() {
 			return this.overview?.lastUpdated ? formatDate(this.overview.lastUpdated) : t('diskmap', 'unknown')
+		},
+		// Always resolvable, so the link is always present rather than
+		// appearing/disappearing with selection state (that was confusing in
+		// practice — a hover highlight looks a lot like a real click-selection
+		// at a glance). Falls back to the scope root when nothing is
+		// selected. No prefix: a personal storage's navPath already matches
+		// Files' own root.
+		filesUrl() {
+			if (!this.selectedPath) {
+				return filesAppUrl('', '', 'folder')
+			}
+			return filesAppUrl('', this.selectedPath.path, this.selectedPath.type)
 		},
 	},
 	async mounted() {
@@ -118,6 +141,7 @@ export default {
 		onSelectPath(payload) {
 			// See InstanceView: focus and category filter cannot both apply.
 			this.activeCategory = null
+			this.selectedPath = payload
 			this.$refs.treemap?.focusPath(payload)
 		},
 		onToggleCategory(key) {
@@ -166,6 +190,25 @@ export default {
 
 .my-storage__sep {
 	color: var(--color-text-maxcontrast);
+}
+
+.my-storage__open-in-files {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	padding: 3px 10px;
+	border-radius: var(--border-radius-pill, 16px);
+	border: 1px solid var(--color-border);
+	background: var(--color-background-hover);
+	font-size: 0.85em;
+	color: var(--color-main-text);
+	text-decoration: none;
+	white-space: nowrap;
+}
+
+.my-storage__open-in-files:hover {
+	background: var(--color-primary-element-light);
+	border-color: var(--color-primary-element);
 }
 
 .my-storage__legend {

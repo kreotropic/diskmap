@@ -39,6 +39,9 @@ OC.L10N.register(
     "No items found." : "Nenhum item encontrado.",
     "Could not load external storages." : "Não foi possível carregar os armazenamentos externos.",
     "Not fully scanned yet — at least this much." : "Ainda não foi totalmente analisado — pelo menos este valor.",
-    "This storage has not been fully scanned yet, so sizes are a lower bound. Background scanning fills this in over time; \"occ files_external:scan\" measures it right away." : "Este armazenamento ainda não foi totalmente analisado, por isso os tamanhos são um valor mínimo. A análise em segundo plano preenche-os com o tempo; \"occ files_external:scan\" mede-o de imediato."
+    "This storage has not been fully scanned yet, so sizes are a lower bound. Background scanning fills this in over time; \"occ files_external:scan\" measures it right away." : "Este armazenamento ainda não foi totalmente analisado, por isso os tamanhos são um valor mínimo. A análise em segundo plano preenche-os com o tempo; \"occ files_external:scan\" mede-o de imediato.",
+    "Open in Files" : "Abrir nos Ficheiros",
+    "Open the selected folder in Files" : "Abrir a pasta selecionada nos Ficheiros",
+    "You are not in the groups assigned to this team folder — this may not open in your own Files." : "Não pertences aos grupos atribuídos a esta pasta de equipa — isto pode não abrir nos teus próprios Ficheiros."
 },
 "nplurals=2; plural=(n != 1);");

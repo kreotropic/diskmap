@@ -32,7 +32,7 @@ map highlights its region.
 All figures show the timestamp of the underlying file cache entry, so it's always clear this
 reflects what Nextcloud's cache knows, not a live disk read.
     ]]></description>
-    <version>0.1.0</version>
+    <version>0.4.0</version>
     <licence>AGPL-3.0-or-later</licence>
     <author mail="rsfneg@gmail.com">Ricardo Ferreira</author>
     <namespace>DiskMap</namespace>
@@ -64,7 +64,7 @@ reflects what Nextcloud's cache knows, not a live disk read.
              off instances where every view would 500. -->
         <database>mysql</database>
         <database>pgsql</database>
-        <nextcloud min-version="32" max-version="34"/>
+        <nextcloud min-version="32" max-version="35"/>
     </dependencies>
 
     <navigations>

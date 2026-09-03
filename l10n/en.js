@@ -39,6 +39,9 @@ OC.L10N.register(
     "No items found." : "No items found.",
     "Could not load external storages." : "Could not load external storages.",
     "Not fully scanned yet — at least this much." : "Not fully scanned yet — at least this much.",
-    "This storage has not been fully scanned yet, so sizes are a lower bound. Background scanning fills this in over time; \"occ files_external:scan\" measures it right away." : "This storage has not been fully scanned yet, so sizes are a lower bound. Background scanning fills this in over time; \"occ files_external:scan\" measures it right away."
+    "This storage has not been fully scanned yet, so sizes are a lower bound. Background scanning fills this in over time; \"occ files_external:scan\" measures it right away." : "This storage has not been fully scanned yet, so sizes are a lower bound. Background scanning fills this in over time; \"occ files_external:scan\" measures it right away.",
+    "Open in Files" : "Open in Files",
+    "Open the selected folder in Files" : "Open the selected folder in Files",
+    "You are not in the groups assigned to this team folder — this may not open in your own Files." : "You are not in the groups assigned to this team folder — this may not open in your own Files."
 },
 "nplurals=2; plural=(n != 1);");

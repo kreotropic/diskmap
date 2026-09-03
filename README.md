@@ -214,8 +214,8 @@ and regenerate the matching `l10n/<locale>.js` with `python3 build/l10n.py`.
 
 ## Requirements
 
-- Nextcloud 32–34
-- PHP 8.1 or later (tested up to PHP 8.5, which Nextcloud 34 ships with)
+- Nextcloud 32–35
+- PHP 8.1 or later (tested up to PHP 8.5, which Nextcloud 34 and 35 ship with)
 - MySQL/MariaDB or PostgreSQL (not SQLite)
 - Redis or Memcached recommended — account display names are read through
   Nextcloud's distributed cache, which is what keeps the whole-server view

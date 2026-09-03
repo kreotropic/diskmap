@@ -8,12 +8,53 @@
 All notable changes to this project are documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.4.0] - 2026-09-03
+
+### Added
+- **Nextcloud 35 support** (`max-version` raised from 34). Verified against
+  `v35.0.0rc3`: PHPUnit and PHPStan pass on the PHP 8.5 base NC35 ships,
+  `info.xml` validates against NC35's `app-info.xsd`, and the four OCP calls
+  this app leans on for permissions and dialect detection
+  (`IAppManager::isEnabledForAnyone`, `IUserManager::getDisplayName`,
+  `IDBConnection::getDatabaseProvider`, `IConfig::getSystemValueString`) are
+  unchanged. A full run against a disposable NC35 instance produced output
+  byte-identical to the same fixture on NC34, aside from the expected
+  per-instance scan timestamp.
+- **"Open in Files" link** next to the title on "My storage" and every team
+  folder: jumps straight to the selected file or folder in the real Files
+  app (falls back to the scope's own root when nothing is selected). For a
+  team folder you are not a member of, the link gets a dashed border and a
+  warning tooltip instead of quietly pointing somewhere it can't actually
+  open — being a server admin does not, by itself, mount a team folder into
+  your own Files.
+- External storages now get their own sidebar entry, rather than being
+  reachable only as a row inside the whole-server tree, backed by a new
+  `adminApi#externalStorages` endpoint.
+- A Nextcloud Playground preview (community contribution by @erseco): a
+  `blueprint.json` that boots DiskMap with seeded demo data directly in the
+  browser, linked from the README.
+- **German and Spanish** translations of the whole interface.
+
+### Fixed
+- An external storage whose size the file cache had not yet computed (`-1`,
+  "not calculated yet") was read as a literal size. As the smallest number
+  there is, it sorted last, was cut from the map's top tiles, drew a
+  zero-area tile, offered no expand arrow, and its own map came back empty.
+  Sizes now fall back to the sum of what the cache does hold, flagged
+  inexact ("at least X"), and only ever rise as you explore further. The
+  same wrong assumption made a folder's file count and composition bar read
+  as empty for folders whose contents were visibly listed on the same
+  screen.
+- An external storage's display name showed a raw internal identifier (an
+  S3 mount's `amazon::external::<md5>`, say) instead of its real mount point.
+- A storage root with a recorded mtime of 0 rendered as "1 January 1970"
+  instead of "unknown".
+
 ## [0.1.0] - 2026-07-30
 
 First public release.
 
 ### Added
-- **German and Spanish** translations of the whole interface.
 - **Nextcloud 34 support** (`max-version` raised from 33), verified on both
   engines. On PostgreSQL upgraded 33 → 34, every read path produced output
   byte-identical to the same instance before the upgrade; on a fresh MariaDB 34

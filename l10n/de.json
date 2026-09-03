@@ -38,7 +38,10 @@
         "No items found.": "Keine Elemente gefunden.",
         "Could not load external storages.": "Externe Speicher konnten nicht geladen werden.",
         "Not fully scanned yet — at least this much.": "Noch nicht vollständig gescannt — mindestens dieser Wert.",
-        "This storage has not been fully scanned yet, so sizes are a lower bound. Background scanning fills this in over time; \"occ files_external:scan\" measures it right away.": "Dieser Speicher wurde noch nicht vollständig gescannt, daher sind die Größenangaben ein Mindestwert. Der Hintergrund-Scan vervollständigt sie mit der Zeit; \"occ files_external:scan\" ermittelt sie sofort."
+        "This storage has not been fully scanned yet, so sizes are a lower bound. Background scanning fills this in over time; \"occ files_external:scan\" measures it right away.": "Dieser Speicher wurde noch nicht vollständig gescannt, daher sind die Größenangaben ein Mindestwert. Der Hintergrund-Scan vervollständigt sie mit der Zeit; \"occ files_external:scan\" ermittelt sie sofort.",
+        "Open in Files": "In Dateien öffnen",
+        "Open the selected folder in Files": "Ausgewählten Ordner in Dateien öffnen",
+        "You are not in the groups assigned to this team folder — this may not open in your own Files.": "Sie gehören nicht zu den Gruppen dieses Team-Ordners — dies wird möglicherweise nicht in Ihren eigenen Dateien geöffnet."
     },
     "pluralForm": "nplurals=2; plural=(n != 1);"
 }

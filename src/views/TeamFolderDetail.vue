@@ -6,6 +6,13 @@
 	<div class="teamfolder-detail">
 		<div class="teamfolder-detail__header">
 			<h2>{{ folder.name }}</h2>
+			<a
+				:href="filesUrl"
+				class="teamfolder-detail__open-in-files"
+				:class="{ 'teamfolder-detail__open-in-files--unsure': folder.filesAccessible === false }"
+				:title="filesUrlTitle">
+				📂 {{ t('diskmap', 'Open in Files') }}<template v-if="folder.filesAccessible === false"> ⚠</template>
+			</a>
 			<span class="teamfolder-detail__sep">·</span>
 			<span><strong>{{ formatBytes(folder.used) }}</strong> {{ t('diskmap', 'used') }}</span>
 			<span class="teamfolder-detail__sep">·</span>
@@ -75,6 +82,7 @@ import Treemap from '../components/Treemap.vue'
 import CategoryLegend from '../components/CategoryLegend.vue'
 import { formatBytes, formatDate } from '../utils/format.js'
 import { loadPaneSizes, savePaneSizes } from '../utils/panelSplit.js'
+import { filesAppUrl } from '../utils/filesApp.js'
 
 export default {
 	name: 'TeamFolderDetail',
@@ -88,6 +96,10 @@ export default {
 			// Owned here (not in Treemap) so the header's <CategoryLegend> and
 			// the map below can read/write the same value — they're siblings.
 			activeCategory: null,
+			// The tree's current selection ({path, type}), forwarded here by
+			// onSelectPath() purely to drive the "Open in Files" link below —
+			// the tree/map sync itself doesn't need this view to remember it.
+			selectedPath: null,
 		}
 	},
 	computed: {
@@ -97,10 +109,36 @@ export default {
 		groupNames() {
 			return this.folder.groups.map((group) => group.id).join(', ')
 		},
+		// Always resolvable (falls back to the team folder's own root when
+		// nothing is selected — see MyStorageView for why this doesn't hide
+		// on no-selection anymore). folder.name IS the team folder's mount
+		// point (TeamFolderService sets it from the same `mount_point`
+		// column) — exactly the top-level name Files shows it under, not an
+		// approximation.
+		filesUrl() {
+			if (!this.selectedPath) {
+				return filesAppUrl(this.folder.name, '', 'folder')
+			}
+			return filesAppUrl(this.folder.name, this.selectedPath.path, this.selectedPath.type)
+		},
+		// filesAccessible is only ever a confident false when the backend
+		// could check every assignment and none matched the viewing admin's
+		// own groups — being a server admin does not by itself mount a team
+		// folder into Files, so this link can genuinely lead nowhere. null
+		// (circles involved, or no checkable assignment) stays silent rather
+		// than raising a false alarm on something TeamFolderService can't
+		// actually rule out.
+		filesUrlTitle() {
+			if (this.folder.filesAccessible === false) {
+				return t('diskmap', 'You are not in the groups assigned to this team folder — this may not open in your own Files.')
+			}
+			return t('diskmap', 'Open the selected folder in Files')
+		},
 	},
 	watch: {
 		'folder.id'() {
 			this.activeCategory = null
+			this.selectedPath = null
 		},
 	},
 	methods: {
@@ -112,6 +150,7 @@ export default {
 		onSelectPath(payload) {
 			// See InstanceView: focus and category filter cannot both apply.
 			this.activeCategory = null
+			this.selectedPath = payload
 			this.$refs.treemap?.focusPath(payload)
 		},
 		onToggleCategory(key) {
@@ -160,6 +199,32 @@ export default {
 
 .teamfolder-detail__sep {
 	color: var(--color-text-maxcontrast);
+}
+
+.teamfolder-detail__open-in-files {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	padding: 3px 10px;
+	border-radius: var(--border-radius-pill, 16px);
+	border: 1px solid var(--color-border);
+	background: var(--color-background-hover);
+	font-size: 0.85em;
+	color: var(--color-main-text);
+	text-decoration: none;
+	white-space: nowrap;
+}
+
+.teamfolder-detail__open-in-files:hover {
+	background: var(--color-primary-element-light);
+	border-color: var(--color-primary-element);
+}
+
+/* Dashed border rather than a color change: this link still works for some
+   admins (advanced ACL, a circle this app can't check) — it's a "might not
+   apply to you" hedge, not an error state. */
+.teamfolder-detail__open-in-files--unsure {
+	border-style: dashed;
 }
 
 .teamfolder-detail__legend {

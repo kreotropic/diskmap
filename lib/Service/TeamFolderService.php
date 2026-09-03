@@ -13,6 +13,8 @@ use OCA\DiskMap\GroupFolders\LayoutDetector;
 use OCA\DiskMap\Usage\IUsageSource;
 use OCA\DiskMap\Usage\Scope;
 use OCP\IDBConnection;
+use OCP\IGroupManager;
+use OCP\IUserSession;
 
 /**
  * Reads team-folder metadata (name, quota, linked groups/circles) directly
@@ -28,6 +30,8 @@ class TeamFolderService {
         private IDBConnection $db,
         private IUsageSource $usageSource,
         private LayoutDetector $layoutDetector,
+        private IUserSession $userSession,
+        private IGroupManager $groupManager,
     ) {
     }
 
@@ -38,6 +42,7 @@ class TeamFolderService {
      *   occupancyPercent: float|null, separateStorage: bool,
      *   groups: array<int, array{id: string, type: string, permissions: int}>,
      *   lastUpdated: int|null,
+     *   filesAccessible: bool|null,
      * }>
      */
     public function listAll(): array {
@@ -49,6 +54,7 @@ class TeamFolderService {
         }
 
         $groupsByFolder = $this->fetchGroupsByFolder();
+        $callerUid = $this->userSession->getUser()?->getUID();
 
         $result = [];
         foreach ($this->fetchFolders() as $folder) {
@@ -81,6 +87,7 @@ class TeamFolderService {
                 'separateStorage' => $layout->separateStorage,
                 'groups' => $groupsByFolder[$folderId] ?? [],
                 'lastUpdated' => $lastUpdated,
+                'filesAccessible' => $this->filesAccessible($groupsByFolder[$folderId] ?? [], $callerUid),
             ];
         }
 
@@ -96,6 +103,50 @@ class TeamFolderService {
             return 0;
         }
         return max(0, $this->usageSource->totalSize(Scope::forStorage($storageId, $path)) ?? 0);
+    }
+
+    /**
+     * DiskMap reads every team folder's usage directly from the filecache
+     * regardless of who is asking (admin-only, see the class-level plan
+     * reference), but the admin viewing it may well not be a *member* of the
+     * folder — being a server admin does not, by itself, mount a team folder
+     * into anyone's Files view. This tells the frontend whether its own
+     * "Open in Files" deep link can actually be expected to work, so it can
+     * warn instead of linking somewhere that 404s.
+     *
+     * true only when the caller matches one of the folder's *group*
+     * assignments — the one case this can check without depending on the
+     * Circles app. false when every assignment is a checkable group and none
+     * matched, OR when there are no assignments at all: group-folders' base
+     * mount mechanism is what puts a folder into anyone's Files view, and an
+     * empty assignment list means it mounts for nobody — confirmed live
+     * against a "Grupo ou equipa: Nenhum" folder in the admin settings, which
+     * this method originally (wrongly) treated as "can't tell". Advanced
+     * permissions only refines what already-mounted members can do within
+     * the folder; it does not mount it for anyone outside the assigned
+     * groups/circles. null ("can't tell") only when a circle is involved —
+     * this app deliberately avoids the Circles API, same reasoning as
+     * avoiding OCA\GroupFolders\* (see the class docblock) — the frontend
+     * treats null the same as true rather than raising a false alarm on
+     * something it can't actually rule out.
+     *
+     * @param array<int, array{id: string, type: string, permissions: int}> $groups
+     */
+    private function filesAccessible(array $groups, ?string $callerUid): ?bool {
+        if ($callerUid === null) {
+            return null;
+        }
+        $hasCircle = false;
+        foreach ($groups as $assignment) {
+            if ($assignment['type'] === 'circle') {
+                $hasCircle = true;
+                continue;
+            }
+            if ($this->groupManager->isInGroup($callerUid, $assignment['id'])) {
+                return true;
+            }
+        }
+        return $hasCircle ? null : false;
     }
 
     /**
