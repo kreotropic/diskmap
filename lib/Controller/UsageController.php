@@ -19,6 +19,7 @@ use OCP\AppFramework\Http;
 use OCP\AppFramework\Http\Attribute\NoAdminRequired;
 use OCP\AppFramework\Http\Attribute\UserRateLimit;
 use OCP\AppFramework\Http\JSONResponse;
+use OCP\ICacheFactory;
 use OCP\IGroupManager;
 use OCP\IRequest;
 use OCP\IUserSession;
@@ -46,6 +47,7 @@ class UsageController extends Controller {
         private IGroupManager $groupManager,
         private UserStorageService $userStorageService,
         private InstanceIndex $instanceIndex,
+        private ICacheFactory $cacheFactory,
     ) {
         parent::__construct(Application::APP_ID, $request);
     }
@@ -213,6 +215,53 @@ class UsageController extends Controller {
             'root' => $result['root'],
             'lastUpdated' => $this->usageSource->lastUpdated($scopeObj),
         ]);
+    }
+
+    #[NoAdminRequired]
+    #[UserRateLimit(limit: 60, period: 60)]
+    public function fileAges(string $scope, string $identifier, string $activeCategory = '', string $path = ''): JSONResponse {
+        try {
+            $scopeObj = Scope::fromRequest($scope, $identifier, $path);
+        } catch (\InvalidArgumentException $e) {
+            return new JSONResponse(['message' => $e->getMessage()], Http::STATUS_BAD_REQUEST);
+        }
+
+        $denied = $this->enforceScopeAccess($scopeObj);
+        if ($denied !== null) {
+            return $denied;
+        }
+
+        $cache = $this->cacheFactory->createLocal('diskmap');
+        $cacheKey = 'fileages_' . md5(json_encode([
+            $scopeObj->type,
+            $scopeObj->identifier,
+            $scopeObj->path,
+            $activeCategory,
+        ]));
+
+        // ICache::get() returns mixed: narrow it so JSONResponse's generic
+        // T (null|scalar|array|stdClass|JsonSerializable) resolves to array.
+        // Also guards against a backend serving a non-array payload.
+        $cached = $cache->get($cacheKey);
+        if (is_array($cached)) {
+            return new JSONResponse($cached);
+        }
+
+        $histogram = $this->usageSource->fileAgeHistogram($scopeObj, $activeCategory);
+
+        $payload = [
+            'scope' => $scopeObj->type,
+            'identifier' => $scopeObj->identifier,
+            'path' => $scopeObj->path,
+            'total' => $histogram['total'],
+            'sizes' => $histogram['sizes'],
+            'buckets' => $histogram['buckets'],
+            'lastUpdated' => $this->usageSource->lastUpdated($scopeObj),
+        ];
+
+        $cache->set($cacheKey, $payload, 300);
+
+        return new JSONResponse($payload);
     }
 
     /**

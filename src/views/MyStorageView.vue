@@ -34,17 +34,19 @@
 					<span class="my-storage__sep">·</span>
 					<span><strong>{{ overview.occupancyPercent }}%</strong> {{ t('diskmap', 'occupancy') }}</span>
 				</template>
-				<CategoryLegend
-					class="my-storage__legend"
-					:active-category="activeCategory"
-					@toggle="onToggleCategory" />
-				<button
-					type="button"
-					class="my-storage__info"
-					:title="t('diskmap', 'Reflects the file cache as of {date}.', { date: lastUpdatedLabel })"
-					:aria-label="t('diskmap', 'Reflects the file cache as of {date}.', { date: lastUpdatedLabel })">
-					ⓘ
-				</button>
+				<div class="my-storage__tools">
+					<CategoryLegend
+						:active-category="activeCategory"
+						@toggle="onToggleCategory" />
+					<LowerViewToggle v-model="lowerView" />
+					<button
+						type="button"
+						class="my-storage__info"
+						:title="t('diskmap', 'Reflects the file cache as of {date}.', { date: lastUpdatedLabel })"
+						:aria-label="t('diskmap', 'Reflects the file cache as of {date}.', { date: lastUpdatedLabel })">
+						ⓘ
+					</button>
+				</div>
 			</div>
 
 			<div class="my-storage__panels">
@@ -59,11 +61,18 @@
 					</Pane>
 					<Pane :size="paneSizes[1]" :min-size="15">
 						<Treemap
+							v-show="lowerView === 'map'"
 							ref="treemap"
 							scope="user"
 							:identifier="uid"
 							:active-category="activeCategory"
 							@reveal-path="onRevealPath" />
+						<FileAgePanel
+							v-if="lowerView === 'ages'"
+							scope="user"
+							:identifier="uid"
+							:selection="selectedPath"
+							:active-category="activeCategory" />
 					</Pane>
 				</Splitpanes>
 			</div>
@@ -80,14 +89,16 @@ import { translate as t } from '@nextcloud/l10n'
 import FolderTree from '../components/FolderTree.vue'
 import Treemap from '../components/Treemap.vue'
 import CategoryLegend from '../components/CategoryLegend.vue'
+import FileAgePanel from '../components/FileAgePanel.vue'
+import LowerViewToggle from '../components/LowerViewToggle.vue'
 import { fetchMyOverview } from '../services/api.js'
 import { formatBytes, formatDate } from '../utils/format.js'
-import { loadPaneSizes, savePaneSizes } from '../utils/panelSplit.js'
+import { loadLowerView, loadPaneSizes, savePaneSizes } from '../utils/panelSplit.js'
 import { filesAppUrl } from '../utils/filesApp.js'
 
 export default {
 	name: 'MyStorageView',
-	components: { NcLoadingIcon, NcNoteCard, Treemap, FolderTree, CategoryLegend, Splitpanes, Pane },
+	components: { NcLoadingIcon, NcNoteCard, Treemap, FolderTree, CategoryLegend, FileAgePanel, LowerViewToggle, Splitpanes, Pane },
 	props: {
 		uid: { type: String, required: true },
 	},
@@ -97,6 +108,8 @@ export default {
 			loading: true,
 			loadError: false,
 			paneSizes: loadPaneSizes(),
+			// 'map' | 'ages': what the lower pane shows, switched from the header.
+			lowerView: loadLowerView(),
 			// Owned here (not in Treemap) so the header's <CategoryLegend> and
 			// the map below can read/write the same value — they're siblings.
 			activeCategory: null,
@@ -211,8 +224,16 @@ export default {
 	border-color: var(--color-primary-element);
 }
 
-.my-storage__legend {
+/* Legend, view switch and info button wrap as one right-aligned group, so a
+   header too wide for one line moves them down together instead of
+   stranding the switch on a row of its own. */
+.my-storage__tools {
 	margin-inline-start: auto;
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: flex-end;
+	align-items: center;
+	gap: 6px 10px;
 }
 
 .my-storage__info {

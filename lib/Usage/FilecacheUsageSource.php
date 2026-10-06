@@ -439,6 +439,217 @@ class FilecacheUsageSource implements IUsageSource {
         return ['root' => $this->toUsageNode($builderRoot['ref'])];
     }
 
+    private const AGE_BUCKET_YEARS = [1, 3, 6, 10];
+    private const AGE_BUCKET_COUNT = 5;
+
+    private const ARCHIVE_MIMETYPE_PATTERN =
+        '/zip|tar|7z|rar|gzip|bzip2|x-xz|compress|iso9660|diskimage|executable|msdownload|portable-executable|debian\.binary-package|x-rpm|x-msi|cab-compressed|^application\/x-diskmap-(pst|dwg)$/i';
+    private const DOCUMENT_MIMETYPE_PATTERN =
+        '/^text\/|^application\/pdf$|^application\/(msword|vnd\.oasis|vnd\.openxmlformats|rtf|vnd\.ms-(excel|powerpoint))/i';
+    private const GENERIC_BINARY_MIMETYPE = 'application/octet-stream';
+    /** @var string[] LIKE patterns for the extension-only archives (.pst/.dwg) */
+    private const ARCHIVE_EXTENSION_LIKES = ['%.pst', '%.dwg'];
+
+    /** @var array<string, int[]> mimetype ids by category */
+    private array $categoryMimetypeIdCache = [];
+    private ?int $genericBinaryMimetypeIdCache = null;
+
+    /**
+     * Files-per-age-bucket histogram: five counts AND five byte sums,
+     * index 0 = newest (≤1y, 1-3y, 3-6y, 6-10y, >10y), optionally restricted
+     * to one category (see src/utils/mimetypeCategory.js for the definitions).
+     *
+     * @return array{total: int, buckets: int[], sizes: int[]}
+     */
+    public function fileAgeHistogram(Scope $scope, string $category = ''): array {
+        $counts = array_fill(0, self::AGE_BUCKET_COUNT, 0);
+        $sizes = array_fill(0, self::AGE_BUCKET_COUNT, 0);
+
+        if ($scope->type === Scope::TYPE_INSTANCE) {
+            if ($scope->path !== '') {
+                $delegate = $this->resolveInstanceDelegate($scope->path);
+                if ($delegate === null) {
+                    return ['total' => 0, 'buckets' => $counts, 'sizes' => $sizes];
+                }
+                return $this->fileAgeHistogram($delegate, $category);
+            }
+
+            $byPath = [];
+            foreach ($this->instanceIndex->listAll() as $entry) {
+                if (self::provablyEmpty($entry->size)) {
+                    continue;
+                }
+                $byPath[$entry->path][] = $entry->storageId;
+            }
+            foreach ($byPath as $path => $storageIds) {
+                [$c, $s] = $this->fileAgeHistogramQuery(array_values(array_unique($storageIds)), (string)$path, $category);
+                foreach ($c as $i => $v) {
+                    $counts[$i] += $v;
+                }
+                foreach ($s as $i => $v) {
+                    $sizes[$i] += $v;
+                }
+            }
+            return ['total' => array_sum($counts), 'buckets' => $counts, 'sizes' => $sizes];
+        }
+
+        $root = $this->rootPath($scope);
+        if ($root === null) {
+            return ['total' => 0, 'buckets' => $counts, 'sizes' => $sizes];
+        }
+        [$storageId, $path] = $root;
+        [$counts, $sizes] = $this->fileAgeHistogramQuery([$storageId], $path, $category);
+
+        return ['total' => array_sum($counts), 'buckets' => $counts, 'sizes' => $sizes];
+    }
+
+    /**
+     * Count AND byte sum of cached files under ($storageIds, $rootPath) per
+     * age bucket, optionally filtered to one category. Raw SQL + index hint
+     * for the same reason as recursiveComposition(): USE INDEX has no
+     * QueryBuilder spelling.
+     *
+     * @param int[] $storageIds
+     * @return array{0: int[], 1: int[]} [counts, sizes]
+     */
+    private function fileAgeHistogramQuery(array $storageIds, string $rootPath, string $category = ''): array {
+        $counts = array_fill(0, self::AGE_BUCKET_COUNT, 0);
+        $sizes = array_fill(0, self::AGE_BUCKET_COUNT, 0);
+
+        $case = $this->ageBucketCase();
+        $likePattern = $rootPath !== '' ? $this->db->escapeLikeParameter($rootPath) . '/%' : '%';
+        $placeholders = implode(',', array_fill(0, count($storageIds), '?'));
+
+        $categorySql = '';
+        $categoryParams = [];
+        if ($category !== '') {
+            [$categorySql, $categoryParams] = $this->categoryFilterSql($category);
+        }
+
+        $sql = 'SELECT ' . $case . ' AS bucket, COUNT(*) AS c, SUM(f.size) AS bytes
+                FROM *PREFIX*filecache f' . $this->pathPrefixIndexHint() . '
+                WHERE f.storage IN (' . $placeholders . ') AND f.path LIKE ? AND f.mimetype != ?' . $categorySql . '
+                GROUP BY ' . $case;
+        $result = $this->db->executeQuery($sql,
+            [...$storageIds, $likePattern, $this->folderMimetypeId(), ...$categoryParams]);
+
+        while ($row = $result->fetch()) {
+            $i = (int)$row['bucket'];
+            $counts[$i] += (int)$row['c'];
+            $sizes[$i] += (int)($row['bytes'] ?? 0);
+        }
+        $result->closeCursor();
+
+        return [$counts, $sizes];
+    }
+
+    /**
+     * Portable WHERE fragment restricting the histogram to one category.
+     * Unanchored IN / NOT IN / LIKE / LOWER only - identical behaviour on
+     * MariaDB, PostgreSQL, Oracle and SQLite.
+     *
+     * @return array{0: string, 1: array<int, int|string>} [sql starting with AND, positional params]
+     */
+    private function categoryFilterSql(string $category): array {
+        $extTest = 'f.mimetype = ? AND (LOWER(f.name) LIKE ? OR LOWER(f.name) LIKE ?)';
+        $extParams = [$this->genericBinaryMimetypeId(), ...self::ARCHIVE_EXTENSION_LIKES];
+
+        if ($category === 'archive') {
+            $ids = $this->categoryMimetypeIds($category);
+            if ($ids === []) {
+                return ['AND ' . $extTest, $extParams];
+            }
+            return ['AND (f.mimetype IN (' . $this->intPlaceholders($ids) . ') OR ' . $extTest . ')',
+                    [...$ids, ...$extParams]];
+        }
+
+        if ($category === 'other') {
+            $known = array_values(array_unique([
+                ...$this->categoryMimetypeIds('image'),
+                ...$this->categoryMimetypeIds('video'),
+                ...$this->categoryMimetypeIds('archive'),
+                ...$this->categoryMimetypeIds('document'),
+            ]));
+            if ($known === []) {
+                return ['AND NOT (' . $extTest . ')', $extParams];
+            }
+            return ['AND f.mimetype NOT IN (' . $this->intPlaceholders($known) . ') AND NOT (' . $extTest . ')',
+                    [...$known, ...$extParams]];
+        }
+
+        $ids = $this->categoryMimetypeIds($category);
+        if ($ids === []) {
+            return ['AND 1 = 0', []];
+        }
+        return ['AND f.mimetype IN (' . $this->intPlaceholders($ids) . ')', $ids];
+    }
+
+    private function categoryMimetypeIds(string $category): array {
+        if (isset($this->categoryMimetypeIdCache[$category])) {
+            return $this->categoryMimetypeIdCache[$category];
+        }
+
+        $qb = $this->db->getQueryBuilder();
+        $qb->select('id', 'mimetype')->from('mimetypes');
+        $result = $qb->executeQuery();
+
+        $ids = [];
+        while ($row = $result->fetch()) {
+            if ($this->mimetypeInCategory((string)$row['mimetype'], $category)) {
+                $ids[] = (int)$row['id'];
+            }
+        }
+        $result->closeCursor();
+
+        return $this->categoryMimetypeIdCache[$category] = $ids;
+    }
+
+    private function mimetypeInCategory(string $mimetype, string $category): bool {
+        return match ($category) {
+            'image' => str_starts_with($mimetype, 'image/'),
+            'video' => str_starts_with($mimetype, 'video/'),
+            'archive' => preg_match(self::ARCHIVE_MIMETYPE_PATTERN, $mimetype) === 1,
+            'document' => preg_match(self::DOCUMENT_MIMETYPE_PATTERN, $mimetype) === 1,
+            default => false,
+        };
+    }
+
+    /**
+     * Id of application/octet-stream — same pattern as folderMimetypeId().
+     * -1 never matches a real id: a table without that row cleanly disables
+     * the extension fallback instead of crashing.
+     */
+    private function genericBinaryMimetypeId(): int {
+        if ($this->genericBinaryMimetypeIdCache === null) {
+            $qb = $this->db->getQueryBuilder();
+            $qb->select('id')
+                ->from('mimetypes')
+                ->where($qb->expr()->eq('mimetype', $qb->createNamedParameter(self::GENERIC_BINARY_MIMETYPE)))
+                ->setMaxResults(1);
+
+            $result = $qb->executeQuery();
+            $row = $result->fetch();
+            $result->closeCursor();
+
+            $this->genericBinaryMimetypeIdCache = $row ? (int)$row['id'] : -1;
+        }
+        return $this->genericBinaryMimetypeIdCache;
+    }
+
+    private function intPlaceholders(array $ids): string {
+        return implode(',', array_fill(0, count($ids), '?'));
+    }
+
+    private function ageBucketCase(): string {
+        $year = (int) (365.25 * 86400);
+        $now = time();
+        $case = 'CASE';
+        foreach (self::AGE_BUCKET_YEARS as $index => $years) {
+            $case .= ' WHEN f.mtime >= ' . ($now - $years * $year) . ' THEN ' . $index;
+        }
+        return $case . ' ELSE ' . (self::AGE_BUCKET_COUNT - 1) . ' END';
+    }
+
     private const TREE_LEVEL_LIMIT = 500;
     // Raised from 200 alongside UsageController::map()'s node-budget ceiling
     // (400 -> 1200 default, 800 -> 2000 max) — each query here is a single

@@ -36,3 +36,31 @@ export function savePaneSizes(sizes) {
 		// Storage unavailable or full — the split just won't persist, not fatal.
 	}
 }
+
+const VIEW_STORAGE_KEY = 'diskmap-lower-view'
+const LOWER_VIEWS = ['map', 'ages']
+
+/**
+ * Which view the lower pane shows: 'map' (the treemap) or 'ages' (the file
+ * age bars). Remembered the same way as the split itself — a preference
+ * about how the user likes to work, shared by every view.
+ */
+export function loadLowerView() {
+	try {
+		const stored = window.localStorage.getItem(VIEW_STORAGE_KEY)
+		if (LOWER_VIEWS.includes(stored)) {
+			return stored
+		}
+	} catch (e) {
+		// Storage unavailable — default below.
+	}
+	return 'map'
+}
+
+export function saveLowerView(view) {
+	try {
+		window.localStorage.setItem(VIEW_STORAGE_KEY, view)
+	} catch (e) {
+		// Not persisted, not fatal.
+	}
+}

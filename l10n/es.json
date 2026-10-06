@@ -41,7 +41,17 @@
         "This storage has not been fully scanned yet, so sizes are a lower bound. Background scanning fills this in over time; \"occ files_external:scan\" measures it right away.": "Este almacenamiento aún no se ha analizado por completo, por lo que los tamaños son un valor mínimo. El análisis en segundo plano los completa con el tiempo; \"occ files_external:scan\" los mide de inmediato.",
         "Open in Files": "Abrir en Archivos",
         "Open the selected folder in Files": "Abrir la carpeta seleccionada en Archivos",
-        "You are not in the groups assigned to this team folder — this may not open in your own Files.": "No perteneces a los grupos asignados a esta carpeta de equipo — puede que esto no se abra en tus propios Archivos."
+        "You are not in the groups assigned to this team folder — this may not open in your own Files.": "No perteneces a los grupos asignados a esta carpeta de equipo — puede que esto no se abra en tus propios Archivos.",
+        "≤ 1 yr": "≤ 1 año",
+        "1-3 yrs": "1-3 años",
+        "3-6 yrs": "3-6 años",
+        "6-10 yrs": "6-10 años",
+        "> 10 yrs": "> 10 años",
+        "Map": "Mapa",
+        "File age": "Antigüedad",
+        "Files by age": "Archivos por antigüedad",
+        "Lower panel view": "Vista del panel inferior",
+        "Could not load the file ages.": "No se pudo cargar la antigüedad de los archivos."
     },
     "pluralForm": "nplurals=2; plural=(n != 1);"
 }

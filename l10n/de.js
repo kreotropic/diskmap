@@ -42,6 +42,16 @@ OC.L10N.register(
     "This storage has not been fully scanned yet, so sizes are a lower bound. Background scanning fills this in over time; \"occ files_external:scan\" measures it right away." : "Dieser Speicher wurde noch nicht vollständig gescannt, daher sind die Größenangaben ein Mindestwert. Der Hintergrund-Scan vervollständigt sie mit der Zeit; \"occ files_external:scan\" ermittelt sie sofort.",
     "Open in Files" : "In Dateien öffnen",
     "Open the selected folder in Files" : "Ausgewählten Ordner in Dateien öffnen",
-    "You are not in the groups assigned to this team folder — this may not open in your own Files." : "Sie gehören nicht zu den Gruppen dieses Team-Ordners — dies wird möglicherweise nicht in Ihren eigenen Dateien geöffnet."
+    "You are not in the groups assigned to this team folder — this may not open in your own Files." : "Sie gehören nicht zu den Gruppen dieses Team-Ordners — dies wird möglicherweise nicht in Ihren eigenen Dateien geöffnet.",
+    "≤ 1 yr" : "≤ 1 Jahr",
+    "1-3 yrs" : "1-3 Jahre",
+    "3-6 yrs" : "3-6 Jahre",
+    "6-10 yrs" : "6-10 Jahre",
+    "> 10 yrs" : "> 10 Jahre",
+    "Map" : "Karte",
+    "File age" : "Dateialter",
+    "Files by age" : "Dateien nach Alter",
+    "Lower panel view" : "Ansicht des unteren Bereichs",
+    "Could not load the file ages." : "Das Dateialter konnte nicht geladen werden."
 },
 "nplurals=2; plural=(n != 1);");

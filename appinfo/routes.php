@@ -47,6 +47,8 @@ return [
         // can highlight its whole region in the map (real WinDirStat behavior).
         ['name' => 'usage#map', 'url' => '/api/v1/map', 'verb' => 'GET'],
 
+        ['name' => 'usage#fileAges', 'url' => '/api/v1/file-ages', 'verb' => 'GET'],
+
         // Admin-only: team folder overview (used/quota, files/trash/versions, linked groups).
         ['name' => 'adminApi#teamFolders', 'url' => '/api/v1/admin/teamfolders', 'verb' => 'GET'],
 

@@ -33,17 +33,19 @@
 				<span class="teamfolder-detail__sep">·</span>
 				<span>{{ t('diskmap', 'Groups') }}: <strong>{{ groupNames }}</strong></span>
 			</template>
-			<CategoryLegend
-				class="teamfolder-detail__legend"
-				:active-category="activeCategory"
-				@toggle="onToggleCategory" />
-			<button
-				type="button"
-				class="teamfolder-detail__info"
-				:title="t('diskmap', 'Reflects the file cache as of {date}.', { date: lastUpdatedLabel })"
-				:aria-label="t('diskmap', 'Reflects the file cache as of {date}.', { date: lastUpdatedLabel })">
-				ⓘ
-			</button>
+			<div class="teamfolder-detail__tools">
+				<CategoryLegend
+					:active-category="activeCategory"
+					@toggle="onToggleCategory" />
+				<LowerViewToggle v-model="lowerView" />
+				<button
+					type="button"
+					class="teamfolder-detail__info"
+					:title="t('diskmap', 'Reflects the file cache as of {date}.', { date: lastUpdatedLabel })"
+					:aria-label="t('diskmap', 'Reflects the file cache as of {date}.', { date: lastUpdatedLabel })">
+					ⓘ
+				</button>
+			</div>
 		</div>
 
 		<div class="teamfolder-detail__panels">
@@ -60,6 +62,7 @@
 				</Pane>
 				<Pane :size="paneSizes[1]" :min-size="15">
 					<Treemap
+						v-show="lowerView === 'map'"
 						ref="treemap"
 						:key="folder.id"
 						scope="teamfolder"
@@ -67,6 +70,13 @@
 						:folder-name="folder.name"
 						:active-category="activeCategory"
 						@reveal-path="onRevealPath" />
+					<FileAgePanel
+						v-if="lowerView === 'ages'"
+						:key="folder.id"
+						scope="teamfolder"
+						:identifier="folder.id"
+						:selection="selectedPath"
+						:active-category="activeCategory" />
 				</Pane>
 			</Splitpanes>
 		</div>
@@ -80,19 +90,23 @@ import { translate as t } from '@nextcloud/l10n'
 import FolderTree from '../components/FolderTree.vue'
 import Treemap from '../components/Treemap.vue'
 import CategoryLegend from '../components/CategoryLegend.vue'
+import FileAgePanel from '../components/FileAgePanel.vue'
+import LowerViewToggle from '../components/LowerViewToggle.vue'
 import { formatBytes, formatDate } from '../utils/format.js'
-import { loadPaneSizes, savePaneSizes } from '../utils/panelSplit.js'
+import { loadLowerView, loadPaneSizes, savePaneSizes } from '../utils/panelSplit.js'
 import { filesAppUrl } from '../utils/filesApp.js'
 
 export default {
 	name: 'TeamFolderDetail',
-	components: { Treemap, FolderTree, CategoryLegend, Splitpanes, Pane },
+	components: { Treemap, FolderTree, CategoryLegend, FileAgePanel, LowerViewToggle, Splitpanes, Pane },
 	props: {
 		folder: { type: Object, required: true },
 	},
 	data() {
 		return {
 			paneSizes: loadPaneSizes(),
+			// 'map' | 'ages': what the lower pane shows, switched from the header.
+			lowerView: loadLowerView(),
 			// Owned here (not in Treemap) so the header's <CategoryLegend> and
 			// the map below can read/write the same value — they're siblings.
 			activeCategory: null,
@@ -227,8 +241,16 @@ export default {
 	border-style: dashed;
 }
 
-.teamfolder-detail__legend {
+/* Legend, view switch and info button wrap as one right-aligned group, so a
+   header too wide for one line moves them down together instead of
+   stranding the switch on a row of its own. */
+.teamfolder-detail__tools {
 	margin-inline-start: auto;
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: flex-end;
+	align-items: center;
+	gap: 6px 10px;
 }
 
 .teamfolder-detail__info {

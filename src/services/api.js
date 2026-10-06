@@ -8,6 +8,15 @@ import { generateUrl } from '@nextcloud/router'
 
 const base = (path) => generateUrl('/apps/diskmap' + path)
 
+// ---------------------------------------------------------------------------
+// Shared cache for the file-ages aggregation: it is the only read whose cost
+// grows with the whole scope (full filecache scan), so two charts mounting
+// at once must never trigger it twice, and switching chart type/category
+// must reuse an already computed payload.
+// ---------------------------------------------------------------------------
+const FILE_AGES_TTL_MS = 120000
+const fileAgesCache = new Map()
+
 /**
  * Fetch the admin team-folder overview: used/quota, files/trash/versions
  * breakdown, and linked groups/circles for every team folder.
@@ -86,6 +95,46 @@ export async function fetchMap(scope, identifier, params = {}) {
 		params: { scope, identifier, ...params },
 	})
 	return data
+}
+
+/**
+ * Fetch the file-age histogram for a scope, optionally restricted to a
+ * subtree path: five buckets (≤1y, 1-3y, 3-6y, 6-10y, >10y) + the file
+ * total. Server-aggregated so the payload is constant whatever the scope
+ * holds (see UsageController::fileAges()).
+ *
+ * Deduplicated + cached: concurrent calls with the same arguments share one
+ * in-flight request (both FileAgeChart instances mount at once — v-show
+ * tabs), and answers stay valid for FILE_AGES_TTL_MS so re-mounts driven by
+ * the metric dropdown (:key) and category toggles cost nothing. Failures
+ * evict the entry so the next call can retry.
+ *
+ * @param {string} scope 'user' | 'teamfolder' | 'storage' | 'instance'
+ * @param {string|number} identifier uid, team folder id, or numeric storage id
+ * @param {string} activeCategory CATEGORY_DOCUMENT, CATEGORY_IMAGE, CATEGORY_VIDEO, CATEGORY_ARCHIVE, CATEGORY_OTHER
+ * @param {object} params { path }
+ */
+export function fetchFileAges(scope, identifier, activeCategory, params = {}) {
+	const key = JSON.stringify(['file-ages', scope, identifier, activeCategory ?? null, params])
+	const now = Date.now()
+	const hit = fileAgesCache.get(key)
+	if (hit && now < hit.expires) {
+		return hit.promise
+	}
+	const promise = axios.get(base('/api/v1/file-ages'), {
+		params: { scope, identifier, activeCategory, ...params },
+	}).then(
+		({ data }) => data,
+		(err) => {
+			fileAgesCache.delete(key)
+			throw err
+		},
+	)
+	// Detached no-op catch: keeps a rejection unobserved by any caller from
+	// logging "Uncaught (in promise)" — real callers attach their own.
+	promise.catch(() => {})
+	fileAgesCache.set(key, { promise, expires: now + FILE_AGES_TTL_MS })
+	return promise
 }
 
 /**

@@ -16,17 +16,19 @@
 				<span><strong>{{ formatBytes(usedSize) }}</strong> {{ t('diskmap', 'used') }}</span>
 				<span class="instance-view__sep">·</span>
 				<span><strong>{{ formatBytes(filesSize) }}</strong> {{ t('diskmap', 'files') }}</span>
-				<CategoryLegend
-					class="instance-view__legend"
-					:active-category="activeCategory"
-					@toggle="onToggleCategory" />
-				<button
-					type="button"
-					class="instance-view__info"
-					:title="t('diskmap', 'Reflects the file cache as of {date}.', { date: lastUpdatedLabel })"
-					:aria-label="t('diskmap', 'Reflects the file cache as of {date}.', { date: lastUpdatedLabel })">
-					ⓘ
-				</button>
+				<div class="instance-view__tools">
+					<CategoryLegend
+						:active-category="activeCategory"
+						@toggle="onToggleCategory" />
+					<LowerViewToggle v-model="lowerView" />
+					<button
+						type="button"
+						class="instance-view__info"
+						:title="t('diskmap', 'Reflects the file cache as of {date}.', { date: lastUpdatedLabel })"
+						:aria-label="t('diskmap', 'Reflects the file cache as of {date}.', { date: lastUpdatedLabel })">
+						ⓘ
+					</button>
+				</div>
 			</div>
 
 			<div class="instance-view__panels">
@@ -41,11 +43,18 @@
 					</Pane>
 					<Pane :size="paneSizes[1]" :min-size="15">
 						<Treemap
+							v-show="lowerView === 'map'"
 							ref="treemap"
 							scope="instance"
 							identifier=""
 							:active-category="activeCategory"
 							@reveal-path="onRevealPath" />
+						<FileAgePanel
+							v-if="lowerView === 'ages'"
+							scope="instance"
+							identifier=""
+							:selection="selectedPath"
+							:active-category="activeCategory" />
 					</Pane>
 				</Splitpanes>
 			</div>
@@ -62,13 +71,15 @@ import { translate as t } from '@nextcloud/l10n'
 import FolderTree from '../components/FolderTree.vue'
 import Treemap from '../components/Treemap.vue'
 import CategoryLegend from '../components/CategoryLegend.vue'
+import FileAgePanel from '../components/FileAgePanel.vue'
+import LowerViewToggle from '../components/LowerViewToggle.vue'
 import { fetchInstanceOverview } from '../services/api.js'
 import { formatBytes, formatDate } from '../utils/format.js'
-import { loadPaneSizes, savePaneSizes } from '../utils/panelSplit.js'
+import { loadLowerView, loadPaneSizes, savePaneSizes } from '../utils/panelSplit.js'
 
 export default {
 	name: 'InstanceView',
-	components: { NcLoadingIcon, NcNoteCard, Treemap, FolderTree, CategoryLegend, Splitpanes, Pane },
+	components: { NcLoadingIcon, NcNoteCard, Treemap, FolderTree, CategoryLegend, FileAgePanel, LowerViewToggle, Splitpanes, Pane },
 	data() {
 		return {
 			// 'used' is files+trash+versions across everyone (matches the same
@@ -83,6 +94,11 @@ export default {
 			loading: true,
 			loadError: false,
 			paneSizes: loadPaneSizes(),
+			// 'map' | 'ages': what the lower pane shows, switched from the header.
+			lowerView: loadLowerView(),
+			// The tree's current selection ({path, type}) — the file age
+			// panel follows it, the same way the map's focus does.
+			selectedPath: null,
 			// Owned here (not in Treemap) so the header's <CategoryLegend> and
 			// the map below can read/write the same value — they're siblings.
 			activeCategory: null,
@@ -116,6 +132,7 @@ export default {
 			// Treemap's dimClass), so drop the filter rather than leave the
 			// legend showing a category that no longer affects anything.
 			this.activeCategory = null
+			this.selectedPath = payload
 			this.$refs.treemap?.focusPath(payload)
 		},
 		onToggleCategory(key) {
@@ -161,8 +178,16 @@ export default {
 	color: var(--color-text-maxcontrast);
 }
 
-.instance-view__legend {
+/* Legend, view switch and info button wrap as one right-aligned group, so a
+   header too wide for one line moves them down together instead of
+   stranding the switch on a row of its own. */
+.instance-view__tools {
 	margin-inline-start: auto;
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: flex-end;
+	align-items: center;
+	gap: 6px 10px;
 }
 
 .instance-view__info {

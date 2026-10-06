@@ -91,4 +91,20 @@ interface IUsageSource {
      * @return array{root: ?UsageNode}
      */
     public function mapTree(Scope $scope, int $maxNodes): array;
+
+    /**
+     * Files-per-age-bucket histogram for the scope — the five numbers
+     * FileAgeChart renders (index 0 = newest; ≤1y, 1-3y, 3-6y, 6-10y, >10y).
+     * Deliberately server-aggregated: the chart needs counts, not rows, so the
+     * response is five numbers whatever the scope holds — and map()'s node
+     * budget can't be reused for this, since its "other" buckets hide exactly
+     * the files this must count.
+     *
+     * Like children()/mapTree(), the subtree is $scope->path; the path never
+     * appears in the signature.
+     *
+     * @return array{total: int, buckets: array{0: int, 1: int, 2: int, 3: int, 4: int}, sizes: array{0: int, 1: int, 2: int, 3: int, 4: int}}
+     *     total is the sum of buckets by construction.
+     */
+    public function fileAgeHistogram(Scope $scope, string $category): array;
 }
