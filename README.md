@@ -61,6 +61,10 @@ I/O, no background job.**
   library is distinguishable from a 100 GB backup dump at a glance.
 - **Category filter** — click a legend entry to dim everything that is not
   that category across the whole map.
+- **File age** — switch the lower pane from the map to a breakdown of files
+  by last-modified date (up to 1 year, 1-3, 3-6, 6-10, over 10 years), by
+  count or by size. It follows the folder selected in the tree and the
+  category filter, so stale data that is safe to archive stands out.
 - **Cache timestamp** — every view states when the underlying file cache entry
   was last updated, so it stays clear that this reflects what Nextcloud knows,
   not a live disk read.
@@ -208,6 +212,7 @@ The app interface is available in:
 - **Portuguese (Portugal)** / Português (Portugal)
 - **German** / Deutsch
 - **Spanish** / Español
+- **French** / Français
 
 Contributions for additional languages are welcome — add a `l10n/<locale>.json`
 and regenerate the matching `l10n/<locale>.js` with `python3 build/l10n.py`.
@@ -316,9 +321,14 @@ Pull requests welcome! Please open an issue first to discuss significant changes
 
 ![Tree to map sync](screenshots/4-tree-map-sync.png)
 
+| File age (team folder, by count) | File age (one folder, by size) |
+|---|---|
+| ![File age](screenshots/5-file-age.png) | ![File age for a folder](screenshots/6-file-age-folder.png) |
+
 *The snapshots above show the admin whole-server view, the per-user personal
-view, a team folder broken down by folder and file type, and the tree→map sync
-lighting up one account's region while dimming the rest.*
+view, a team folder broken down by folder and file type, the tree→map sync
+lighting up one team folder's region while dimming the rest, and the file age
+view over a whole team folder and then scoped to its Archive folder.*
 
 
 ## Changelog

@@ -8,6 +8,25 @@
 All notable changes to this project are documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.0] - 2026-10-14
+
+### Added
+- **File age view** (community contribution by @DidierSardine): a
+  *Map | File age* switch in the header of every view (My storage, Whole
+  server, team folders and external storages) swaps the lower pane between
+  the treemap and a breakdown of files by last-modified date, in five
+  buckets: up to 1 year, 1-3, 3-6, 6-10 and over 10 years. Bars show either
+  file count or total size, with a share donut beside them when the pane is
+  wide enough. The panel follows the folder selected in the tree and the
+  category filter, so "how old are the videos in this folder?" is two
+  clicks. The chosen view is remembered per browser, like the tree/map
+  split.
+- The histogram is one grouped query per scope, using the same portable SQL
+  and index hint as the composition queries, and is cached for 5 minutes per
+  scope, folder and category.
+- **French** translation of the whole interface (community contribution by
+  @DidierSardine).
+
 ## [0.4.0] - 2026-09-03
 
 ### Added

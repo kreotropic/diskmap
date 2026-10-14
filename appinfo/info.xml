@@ -17,7 +17,8 @@ DiskMap is a visualizer over data that already exists: it never triggers a files
 
 Each view pairs a WinDirStat-style treemap with an expandable folder tree, kept in sync both
 ways: click a tile on the map and the tree opens to that file, click a row in the tree and the
-map highlights its region.
+map highlights its region. A File age view swaps the map for a breakdown of files by
+last-modified date, following the selected folder and category filter.
 
 **For administrators:**
 - Whole-server view: every account, team folder and external storage as a top-level entry,
@@ -32,7 +33,7 @@ map highlights its region.
 All figures show the timestamp of the underlying file cache entry, so it's always clear this
 reflects what Nextcloud's cache knows, not a live disk read.
     ]]></description>
-    <version>0.4.0</version>
+    <version>0.5.0</version>
     <licence>AGPL-3.0-or-later</licence>
     <author mail="rsfneg@gmail.com">Ricardo Ferreira</author>
     <namespace>DiskMap</namespace>
@@ -53,6 +54,8 @@ reflects what Nextcloud's cache knows, not a live disk read.
     <screenshot>https://raw.githubusercontent.com/kreotropic/diskmap/main/screenshots/2-my-storage.png</screenshot>
     <screenshot>https://raw.githubusercontent.com/kreotropic/diskmap/main/screenshots/3-team-folder.png</screenshot>
     <screenshot>https://raw.githubusercontent.com/kreotropic/diskmap/main/screenshots/4-tree-map-sync.png</screenshot>
+    <screenshot>https://raw.githubusercontent.com/kreotropic/diskmap/main/screenshots/5-file-age.png</screenshot>
+    <screenshot>https://raw.githubusercontent.com/kreotropic/diskmap/main/screenshots/6-file-age-folder.png</screenshot>
 
     <dependencies>
         <php min-version="8.1"/>
