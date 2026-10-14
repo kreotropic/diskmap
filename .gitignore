@@ -8,3 +8,5 @@
 
 # krankerl writes release tarballs here, inside the app's own build/ dir.
 /build/artifacts/
+# Signed release tarballs kept per version (krankerl wipes build/artifacts/).
+/releases/
